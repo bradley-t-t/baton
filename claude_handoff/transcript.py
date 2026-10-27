@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 
-from .detect import BLOCKED, USER_SAID_NO, normalize
+from .detect import BLOCKED, USER_SAID_NO, holdback_held, normalize
 
 
 def load(path: str) -> list:
@@ -130,6 +130,9 @@ def blocked_calls(entries, never_patterns=()) -> list:
     for i, call in enumerate(calls):
         r = call["result"] or ""
         if not call["error"] or not BLOCKED.search(r) or USER_SAID_NO.search(r):
+            continue
+        # The person's Holdback hook: it already said not to hand this off.
+        if holdback_held(r):
             continue
         if matches_any(r, never_patterns) or matches_any(json.dumps(call["input"], default=str), never_patterns):
             continue

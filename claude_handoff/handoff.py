@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import actions, judge
 from .config import load as load_config, provider_config
-from .detect import about_handoff, admits_block, is_decline, matches_any
+from .detect import about_handoff, admits_block, holdback_held, is_decline, matches_any
 from .state import add_pending, drop_pending, log, mark_seen, pending, seen
 from .transcript import blocked_calls, clip, interrupted, person_messages, said_no, tool_calls
 
@@ -51,6 +51,10 @@ def reason(reply: str, entries=None, user: str = None, history=None, cfg: dict =
         return None
     user_msg = asked(user, entries)
     if about_handoff(user_msg):
+        return None
+    # Holdback already refused the write and said not to hand it off — don't hand off.
+    if holdback_held(reply or "") or any(
+            c.get("error") and holdback_held(c.get("result") or "") for c in tool_calls(entries or [])):
         return None
     if interrupted(entries) or said_no(entries):
         return None

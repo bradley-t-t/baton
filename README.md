@@ -69,7 +69,7 @@ rm /tmp/example.txt
 ```
 ````
 
-The runner executes each line whose first real token (after `sudo` / `env` prefixes) is in `run_actions.allow`. `allow` may be a flat list or a map keyed by provider name / `"*"`. Commands run in the Claude session's working directory. On success you get a short result (`Deleted /tmp/example.txt.`) plus `(via Grok)`. On failure the block reason names the failed command and stops.
+The runner writes the fence body to a temp script and runs it with `bash` (quotes, loops, and `python3 -c` stay intact). Each simple command's first real token must be in `run_actions.allow` (flat list or per-provider map). Commands run in the Claude session's working directory; bash expands `~`. On success you get a short result (`Deleted /tmp/example.txt.` or `Created 5 files in ~/Downloads: …`) plus `(via Grok)`. On failure the block reason names the error and stops. Prefer `printf` redirects over nested `python3 -c` quotes when creating files.
 
 Put API keys in `~/.config/claude-handoff/secrets.env` (for example `XAI_API_KEY=…`). Install wraps the hooks so that file is sourced when present; the key is never printed.
 

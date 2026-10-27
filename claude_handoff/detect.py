@@ -93,6 +93,15 @@ BLOCKED = re.compile(
     re.I | re.S)
 
 # The person said no to a prompt themselves: that is their answer and is never handed off.
+# The person's own Holdback hook refused the call and told Claude not to hand it off.
+HOLDBACK_HELD = re.compile(
+    r"\bHoldback:\s*held\b"
+    r"|\bHoldback (?:hook )?blocked\b"
+    r"|\bnever hand this off\b"
+    r"|\bmust not be handed off\b",
+    re.I,
+)
+
 USER_SAID_NO = re.compile(
     r"\bThe user doesn'?t want to proceed\b|\btool use was rejected\b|\buser (?:rejected|declined|denied|cancel+ed)\b"
     r"|\b(?:you|the user|the person) (?:declined|rejected|denied|said no to|cancel+ed)\b", re.I)
@@ -145,6 +154,11 @@ def admits_block(reply: str) -> bool:
     t = normalize(reply)
     return bool(NOT_RUN.search(t) or is_decline(t)
                 or re.search(r"\btimed? ?out\b|\bblocked\b|\bdenied\b|\bapprov|\bconfirm", t, re.I))
+
+
+def holdback_held(text: str) -> bool:
+    """Whether text is a Holdback denial (tool result or Claude reporting it)."""
+    return bool(HOLDBACK_HELD.search(normalize(text or "")))
 
 
 def about_handoff(text: str) -> bool:

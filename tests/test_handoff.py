@@ -33,7 +33,7 @@ class FakeProvider:
         return "x"
 
 
-ALLOW = ["rm", "ls", "cat", "echo", "mkdir", "touch", "mv", "cp", "chmod",
+ALLOW = ["rm", "ls", "cat", "echo", "printf", "mkdir", "touch", "mv", "cp", "chmod",
          "pwd", "head", "tail", "wc", "stat", "test", "true", "false",
          "python3", "python", "bash", "sh"]
 
@@ -288,6 +288,10 @@ class ExactRelay(unittest.TestCase):
 
 
 class Actions(unittest.TestCase):
+
+
+
+
     def test_extract_bash_fence(self):
         from claude_handoff.actions import extract_commands, first_word
         text = "Sure.\n```bash\nls -la\nrm /tmp/x\n```\n"
@@ -315,6 +319,62 @@ class Actions(unittest.TestCase):
         self.assertTrue(out["ok"] and out["ran"])
         self.assertFalse(f.exists())
         self.assertIn("Deleted", out["summary"])
+
+
+
+
+
+
+    def test_python_c_quotes_not_mangled(self):
+        """Regression: shlex.quote round-trip used to break python3 -c quotes."""
+        from claude_handoff.actions import run_allowed
+        td = tempfile.mkdtemp()
+        target = Path(td) / "out.txt"
+        code = "open(r'%s', 'w').write('alpha bravo\\n')" % target
+        fence = "```bash\npython3 -c %s\n```\n" % repr(code)
+        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 5,
+                               "allow": ALLOW}}
+        out = run_allowed(fence, cfg, "xai", cwd=td)
+        self.assertTrue(out["ok"], out["summary"])
+        self.assertEqual(target.read_text().strip(), "alpha bravo")
+
+    def test_create_five_files_printf_fence(self):
+        from claude_handoff.actions import run_allowed
+        td = tempfile.mkdtemp()
+        words = ["alpha", "bravo", "charlie", "delta", "echo"]
+        lines = ["```bash"]
+        for i, w in enumerate(words, 1):
+            path = Path(td) / ("ch-test-%d.txt" % i)
+            lines.append("printf '%%s\\n' '%s' > %s" % (w, path))
+        lines.append("```")
+        fence = "\n".join(lines) + "\n"
+        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
+                               "allow": ALLOW}}
+        out = run_allowed(fence, cfg, "xai", cwd=td)
+        self.assertTrue(out["ok"], out["summary"])
+        for i, w in enumerate(words, 1):
+            f = Path(td) / ("ch-test-%d.txt" % i)
+            self.assertTrue(f.exists())
+            self.assertEqual(f.read_text().strip(), w)
+        self.assertIn("Created", out["summary"])
+
+    def test_for_loop_fence_runs_verbatim(self):
+        from claude_handoff.actions import run_allowed
+        td = tempfile.mkdtemp()
+        fence = (
+            "```bash\n"
+            "for i in 1 2 3; do\n"
+            "  printf '%%s\\n' \"word$i\" > %s/ch-loop-$i.txt\n"
+            "done\n"
+            "```\n"
+        ) % td
+        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
+                               "allow": ALLOW}}
+        out = run_allowed(fence, cfg, "xai", cwd=td)
+        self.assertTrue(out["ok"], out["summary"])
+        for i in (1, 2, 3):
+            self.assertEqual((Path(td) / ("ch-loop-%d.txt" % i)).read_text().strip(),
+                             "word%d" % i)
 
     def test_disabled_is_noop(self):
         from claude_handoff.actions import run_allowed

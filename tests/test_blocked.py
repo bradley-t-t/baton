@@ -91,6 +91,21 @@ class ReasonGate(unittest.TestCase):
             {"type": "text", "text": "partial"}]}, "error": "classifier"}]
         self.assertIsNone(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg))
 
+
+    def test_holdback_denial_is_not_handed_off(self):
+        held = (
+            "Holdback: held. This call would write a file, and the person's message doesn't "
+            "tell you to do any work. Never hand this off."
+        )
+        entries = call(held, tool="Write", inp={"file_path": "/tmp/x", "content": "a"})
+        self.assertEqual(blocked_calls(entries), [])
+        reply = (
+            "I didn't create any files in Downloads. Your Holdback hook blocked the write "
+            "because it read \"Downloads I mean\" as just a correction. Holdback says this "
+            "one must not be handed off."
+        )
+        self.assertIsNone(handoff.reason(reply, entries, user="Downloads I mean", cfg=self.cfg))
+
     def test_user_said_no_skips(self):
         entries = call(NOT_BLOCKED_ERRORS["user_rejected"])
         self.assertIsNone(handoff.reason("I stopped because you said no.", entries, cfg=self.cfg))
