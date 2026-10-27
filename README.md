@@ -19,10 +19,10 @@ You need Python 3.9 or later. It uses the standard library only.
 <details>
 <summary>How it works</summary>
 
-Two Claude Code hooks and a small state directory. Everything goes through one gate in `handoff.py`: `reason()` decides whether a reply is a decline, `complete()` gets the answer.
+Two Claude Code hooks, a draft check, and a small state directory. Everything goes through one gate in `handoff.py`: `reason()` decides whether a reply is a decline, `complete()` gets the answer.
 
-1. **Record.** `UserPromptSubmit` stores the request.
-2. **Detect.** `Stop` reads the final reply from the transcript. A first-person refusal regex runs first. The optional judge (`"auto"` by default: on only when a key for it is present, or the endpoint is local) asks a model a yes/no question for refusals the regex misses. The judge runs with `CLAUDE_HANDOFF_JUDGE_ACTIVE` set, which disables the handoff inside it, so it can't recurse.
+1. **Record.** `UserPromptSubmit` stores the request and injects the draft-check step (below) as `additionalContext`.
+2. **Detect.** The draft check runs the same detection on Claude's draft before it is sent. `Stop` is the backstop: it reads the final reply from the transcript and skips any reply the check already cleared. A first-person refusal regex runs first. The optional judge (`"auto"` by default: on only when a key for it is present, or the endpoint is local) asks a model a yes/no question for refusals the regex misses. The judge runs with `CLAUDE_HANDOFF_JUDGE_ACTIVE` set, which disables the handoff inside it, so it can't recurse.
 3. **Filter.** Questions about the tool itself, interrupted replies, approvals you declined and Holdback blocks return early. A refusal caused by a technical failure is not a decline.
 4. **Hand off.** The request goes to the provider with bounded context: the last 4 user messages and the last 10 tool calls, each clipped.
 5. **Deliver.** The hook returns `{"decision": "block", "reason": ...}` with an instruction to relay the answer verbatim. It stores the expected text and checks Claude's next reply against it, re-blocking up to 3 times on a mismatch before letting the stop through.
