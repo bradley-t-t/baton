@@ -106,6 +106,10 @@ class DeclineDetection(unittest.TestCase):
         self.assertTrue(about_handoff("Tell me about the claude-handoff config."))
         self.assertTrue(about_handoff("Is the handback ready?"))
         self.assertFalse(about_handoff("Please delete the file in Downloads."))
+        self.assertFalse(about_handoff(
+            "Permanently delete /tmp/claude-handoff-test-delete-me.txt"))
+        self.assertFalse(about_handoff(
+            "rm ~/Development/claude-handoff/README.md"))
         self.assertFalse(about_handoff("I won't wipe the outreach history."))
 
 

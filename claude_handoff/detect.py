@@ -149,10 +149,20 @@ def admits_block(reply: str) -> bool:
 
 def about_handoff(text: str) -> bool:
     """Whether the person's own message is about the handoff tool itself ("why didn't the
-    handoff fire?"). Such a turn is a conversation about the tool, not a task to hand off."""
+    handoff fire?"). Such a turn is a conversation about the tool, not a task to hand off.
+
+    Pathnames like /tmp/claude-handoff-test-delete-me.txt must not match: require that
+    "claude-handoff" is not a path segment (no / before it) and not a longer hyphenated
+    filename (no -word after it).
+    """
     t = normalize(text).lower()
-    return bool(re.search(r"\bclaude[- ]handoff\b|\bhand ?off (?:hook|tool|provider|config)\b"
-                          r"|\b(?:the|this|that) hand ?off\b|\bhandback\b", t))
+    return bool(re.search(
+        r"(?<![/\w.-])claude[- ]handoff\b(?!-[\w])"
+        r"|\bhand ?off (?:hook|tool|provider|config)\b"
+        r"|\b(?:the|this|that) hand ?off\b"
+        r"|\bhandback\b",
+        t,
+    ))
 
 
 def matches_any(text: str, patterns) -> bool:
