@@ -82,6 +82,26 @@ def _task_for(r: dict, user: str, reply: str) -> str:
     return r.get("task") or user or reply
 
 
+RELAY_PREFIX = (
+    "Reply with ONLY the following text, character for character. "
+    "Nothing before it, nothing after it, no commentary:\n\n"
+)
+
+
+def relay_instruction(expected: str) -> str:
+    """Stop-hook reason that asks Claude to relay {expected} exactly."""
+    return RELAY_PREFIX + (expected or "")
+
+
+def matches_expectation(reply: str, expected: str) -> bool:
+    """True when Claude's visible reply is the expected handoff text (trim trailing WS)."""
+    if expected is None:
+        return False
+    a = (reply or "").rstrip()
+    b = (expected or "").rstrip()
+    return a == b
+
+
 def label(provider_name: str, text: str) -> str:
     """The text Claude will relay: the result, then a short (via …) tag.
 

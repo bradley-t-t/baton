@@ -83,3 +83,45 @@ def drop_pending(hid: str):
     p = load("pending.json", {})
     if p.pop(hid, None) is not None:
         save("pending.json", p)
+
+
+MAX_RELAY_RETRIES = 3
+
+
+def set_expectation(session: str, expected: str, max_retries: int = MAX_RELAY_RETRIES):
+    """Remember the exact text Claude must relay for this session after a handoff."""
+    data = load("expectations.json", {})
+    data[session or "-"] = {
+        "expected": expected,
+        "retries": 0,
+        "max_retries": int(max_retries),
+        "at": time.time(),
+    }
+    if len(data) > 200:
+        for k in sorted(data, key=lambda k: data[k].get("at", 0))[: len(data) - 200]:
+            data.pop(k, None)
+    save("expectations.json", data)
+
+
+def get_expectation(session: str):
+    return load("expectations.json", {}).get(session or "-")
+
+
+def clear_expectation(session: str):
+    data = load("expectations.json", {})
+    if data.pop(session or "-", None) is not None:
+        save("expectations.json", data)
+
+
+def bump_expectation_retry(session: str) -> dict:
+    """Increment retries; return the updated record (or None if gone)."""
+    data = load("expectations.json", {})
+    rec = data.get(session or "-")
+    if not rec:
+        return None
+    rec = dict(rec)
+    rec["retries"] = int(rec.get("retries") or 0) + 1
+    data[session or "-"] = rec
+    save("expectations.json", data)
+    return rec
+

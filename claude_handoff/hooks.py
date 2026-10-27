@@ -4,7 +4,8 @@ Claude Code feeds each hook a JSON object on stdin and reads JSON (or nothing) o
 
   UserPromptSubmit  -> remember the person's request for this session
   Stop              -> if the final reply is a decline, hand it off, wait, and block the stop
-                       with the provider's labeled answer so Claude relays it
+                       with an exact-relay instruction so Claude's visible reply is only the
+                       handoff body plus the (via …) tag
 """
 
 from __future__ import annotations
@@ -13,8 +14,16 @@ import json
 import sys
 
 from .config import load as load_config
-from .handoff import run
-from .state import last_request, log, remember_request
+from .handoff import matches_expectation, relay_instruction, run
+from .state import (
+    bump_expectation_retry,
+    clear_expectation,
+    get_expectation,
+    last_request,
+    log,
+    remember_request,
+    set_expectation,
+)
 from .transcript import last_reply, load as load_transcript, person_messages
 
 
@@ -42,35 +51,76 @@ def on_prompt():
     if prompt:
         remember_request(session, str(prompt))
         log("prompt session=%s chars=%d" % (session[:8], len(str(prompt))))
-    # Pass through: no additionalContext unless we later want one.
     return None
+
+
+def _reply_from(data: dict, entries) -> str:
+    reply = last_reply(entries)
+    if not reply:
+        reply = (data.get("last_assistant_message") or data.get("message") or "").strip()
+    return reply or ""
+
+
+def _check_expectation(session: str, reply: str):
+    """If a handoff is waiting to be relayed exactly, enforce it.
+
+    Returns:
+      {"decision":"block","reason":...} to re-prompt,
+      None to allow stop (match, or retries exhausted / nothing pending).
+    """
+    rec = get_expectation(session)
+    if not rec:
+        return None
+    expected = rec.get("expected") or ""
+    if matches_expectation(reply, expected):
+        clear_expectation(session)
+        log("relay matched session=%s chars=%d" % (session[:8], len(expected)))
+        return None
+    # Mismatch: re-block up to max_retries times, then allow stop.
+    retries = int(rec.get("retries") or 0)
+    max_retries = int(rec.get("max_retries") or 3)
+    if retries >= max_retries:
+        clear_expectation(session)
+        log("relay gave up session=%s after %d mismatches" % (session[:8], retries))
+        return None
+    updated = bump_expectation_retry(session) or rec
+    retries = int(updated.get("retries") or 0)
+    log("relay mismatch session=%s retry=%d/%d" % (session[:8], retries, max_retries))
+    return {"decision": "block", "reason": relay_instruction(expected)}
 
 
 def on_stop():
     data = _read()
-    # Prevent loops: when Claude Code re-runs Stop after we blocked it with a reason,
-    # stop_hook_active is true. Never hand off again in that case.
-    if data.get("stop_hook_active"):
-        return None
-    cfg = load_config()
-    if not cfg.get("enabled", True):
-        return None
     session = data.get("session_id") or ""
     path = data.get("transcript_path") or ""
     entries = load_transcript(path)
-    reply = last_reply(entries)
-    if not reply:
-        # Some Claude Code builds put the final text on the event itself.
-        reply = (data.get("last_assistant_message") or data.get("message") or "").strip()
+    reply = _reply_from(data, entries)
+
+    # Always enforce an outstanding exact-relay expectation, even when
+    # stop_hook_active is true (that flag used to short-circuit and let narration through).
+    if get_expectation(session):
+        outcome = _check_expectation(session, reply)
+        # Match / give-up → allow stop. Mismatch → re-block. Never hand off again here.
+        return outcome
+
+    # No expectation pending. stop_hook_active means Claude Code is re-running Stop
+    # after a prior block with no stored expectation — do nothing (avoid loops).
+    if data.get("stop_hook_active"):
+        return None
+
+    cfg = load_config()
+    if not cfg.get("enabled", True):
+        return None
     user = last_request(session) or (person_messages(entries)[-1] if person_messages(entries) else "")
     cwd = data.get("cwd") or ""
     result = run(reply, entries=entries, user=user, history=entries, cwd=cwd, session=session, cfg=cfg)
     if not result:
         return None
-    # Block the stop so Claude has to continue, with the labeled handoff text as the reason.
-    # Claude Code shows reason to the model as Stop-hook feedback; Claude then relays it.
-    log("stop blocked session=%s chars=%d" % (session[:8], len(result)))
-    return {"decision": "block", "reason": result}
+    # Store the exact user-facing text; block with an exact-relay instruction.
+    set_expectation(session, result)
+    reason = relay_instruction(result)
+    log("stop blocked session=%s chars=%d (exact relay)" % (session[:8], len(result)))
+    return {"decision": "block", "reason": reason}
 
 
 def main(argv=None):

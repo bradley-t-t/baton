@@ -2,7 +2,7 @@
 
 When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) declines a request — for any reason: rules, safety, policy, a moral line — **claude-handoff** catches the refusal, sends your original request to another AI you choose, waits for its answer, and has Claude relay that answer in place of the refusal.
 
-The relayed text is the provider's result plus a short trailing tag like `(via Grok)`. No long disclaimer, no pressure on Claude, nothing that asks it to hide the handoff.
+The relayed text is the provider's result plus a short trailing tag like `(via Grok)`. The Stop hook asks Claude to reply with that text character for character and re-blocks if Claude adds narration (up to 3 retries). No long disclaimer, no pressure on Claude, nothing that asks it to hide the handoff.
 
 Works isolated from any other tooling. Stdlib only. Python 3.9+.
 
