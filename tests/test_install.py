@@ -12,6 +12,11 @@ from claude_handoff import install as inst  # noqa: E402
 
 
 class Install(unittest.TestCase):
+    def test_hook_command_sources_secrets_env(self):
+        cmd = inst.hook_command("Stop")
+        self.assertIn("secrets.env", cmd)
+        self.assertIn("claude_handoff.hooks stop", cmd)
+
     def setUp(self):
         self.td = tempfile.mkdtemp()
         self.settings = Path(self.td) / "settings.json"

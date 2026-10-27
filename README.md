@@ -2,7 +2,7 @@
 
 When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) declines a request — for any reason: rules, safety, policy, a moral line — **claude-handoff** catches the refusal, sends your original request to another AI you choose, waits for its answer, and has Claude relay that answer in place of the refusal.
 
-The relayed text is always labeled as coming from the handoff provider. It never pretends to be Claude's own reply, and it never pressures Claude or asks it to hide that a handoff happened.
+The relayed text is the provider's result plus a short trailing tag like `(via Grok)`. No long disclaimer, no pressure on Claude, nothing that asks it to hide the handoff.
 
 Works isolated from any other tooling. Stdlib only. Python 3.9+.
 
@@ -56,12 +56,26 @@ claude-handoff test --provider local
 
 1. **Detect.** On every Claude Code turn, the `UserPromptSubmit` hook records your request. The `Stop` hook reads Claude's final reply from the session transcript. A first-person refusal (regex word scan) counts as a decline. An optional LLM yes/no judge can catch refusals the scan misses; it is `"auto"` by default (on only when a provider key is available) and is guarded by `CLAUDE_HANDOFF_JUDGE_ACTIVE` so it can never re-enter the handoff.
 2. **Hand off.** Your original request plus a short context (recent messages, recent tool calls) goes to the provider you configured.
-3. **Complete.** The provider returns text. Optional `run_actions` (off by default) will run fenced shell commands whose first word is on a per-provider allow-list, with a timeout, and feed the output back once.
+3. **Complete.** The provider returns text. With `run_actions` enabled it runs commands from a ```bash / ```sh fence whose first token is on the allow-list (a flat list, or a per-provider map), in the session's cwd, with `~` expanded. On success the person sees a clean line like `Deleted /path.` plus the `(via …)` tag.
 4. **Deliver.** The Stop hook waits up to `timeout_seconds`, then returns Claude Code's Stop-hook JSON `{"decision":"block","reason":…}` with the labeled answer. Claude relays it. A `stop_hook_active` flag and a per-reply seen-set stop loops: the same turn is never handed off twice.
+
+## Run actions
+
+When `run_actions.enabled` is true, the provider can complete shell/file tasks by returning exact commands in one fenced block:
+
+````
+```bash
+rm /tmp/example.txt
+```
+````
+
+The runner executes each line whose first real token (after `sudo` / `env` prefixes) is in `run_actions.allow`. `allow` may be a flat list or a map keyed by provider name / `"*"`. Commands run in the Claude session's working directory. On success you get a short result (`Deleted /tmp/example.txt.`) plus `(via Grok)`. On failure the block reason names the failed command and stops.
+
+Put API keys in `~/.config/claude-handoff/secrets.env` (for example `XAI_API_KEY=…`). Install wraps the hooks so that file is sourced when present; the key is never printed.
 
 ## Limits (deliberate)
 
-- The answer is always labeled `Handoff result from <provider>:`. It is never presented as Claude's own words.
+- The answer ends with a short `(via Grok)` / `(via <provider>)` tag. Nothing else is added.
 - Nothing here tells Claude it "has no choice," pressures it, or asks it to hide that a handoff happened.
 - Declines that are only a technical failure ("pytest isn't installed"), a filter/API cut-off, or the person saying no to an approval prompt are **not** handed off.
 - A message about the handoff tool itself ("why didn't the handoff fire?") is not handed off.

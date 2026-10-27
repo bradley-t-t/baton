@@ -83,16 +83,21 @@ def _task_for(r: dict, user: str, reply: str) -> str:
 
 
 def label(provider_name: str, text: str) -> str:
-    """The text Claude will relay. Always named as coming from the handoff provider.
-    Never pressures Claude, never asks it to hide that a handoff happened."""
-    return ("Handoff result from %s:\n\n%s\n\n"
-            "(This answer came from the handoff provider, not from Claude. "
-            "Please relay it to the person as the result of their request.)"
-            % (provider_name, (text or "").strip()))
+    """The text Claude will relay: the result, then a short (via …) tag.
+
+    Soft attribution only. Never pressures Claude, never asks it to hide a handoff,
+    never wraps the answer in a long disclaimer.
+    """
+    from .providers.base import display_name
+    body = (text or "").strip()
+    tag = "(via %s)" % display_name(provider_name)
+    if not body:
+        return tag
+    return body + "\n" + tag
 
 
 def complete(r: dict, reply: str, user: str, cwd: str, entries, history, cfg: dict = None) -> str:
-    """Talk to the configured provider and return a labeled answer. Raises on hard failure."""
+    """Talk to the configured provider, run any allowed commands, return a tagged answer."""
     from .providers import get
     cfg = cfg or load_config()
     pcfg = provider_config(cfg)
@@ -114,17 +119,20 @@ def complete(r: dict, reply: str, user: str, cwd: str, entries, history, cfg: di
         drop_pending(hid)
         log("provider failed %s: %s: %s" % (hid, type(e).__name__, e))
         raise
-    extra = actions.run_allowed(answer, cfg, provider.name)
-    if extra:
-        # One follow-up round with the command outputs.
-        try:
-            answer = provider.complete(
-                task + "\n\nI ran the commands you suggested. Their output:\n\n" + extra
-                + "\n\nFinish the answer with any final result.",
-                ctx)
-        except Exception as e:  # noqa: BLE001
-            log("run_actions follow-up failed %s: %s" % (hid, e))
-            answer = (answer or "") + "\n\n[command outputs]\n" + extra
+
+    ran = actions.run_allowed(answer, cfg, provider.name, cwd=cwd)
+    if ran.get("ran"):
+        if not ran.get("ok"):
+            drop_pending(hid)
+            log("run_actions failed %s: %s" % (hid, ran.get("summary", "")[:200]))
+            return label(provider.name, ran["summary"])
+        # Prefer the runner's clean summary (e.g. "Deleted /path.") over provider prose
+        # that still contains fences or leftover refusal wording.
+        body = ran["summary"] or actions.strip_fences(answer) or "Done."
+        drop_pending(hid)
+        log("delivered %s from %s via actions (%d chars)" % (hid, provider.name, len(body)))
+        return label(provider.name, body)
+
     drop_pending(hid)
     log("delivered %s from %s (%d chars)" % (hid, provider.name, len(answer or "")))
     return label(provider.name, answer)
@@ -148,7 +156,5 @@ def run(reply: str, entries=None, user: str = None, history=None, cwd: str = "",
         log("run failed: %s: %s" % (type(e).__name__, e))
         # Surface a clear failure instead of silently falling through to the refusal.
         pcfg = provider_config(cfg) or {}
-        return ("Handoff to %s failed: %s: %s\n\n"
-                "(The original reply was a refusal; the handoff provider could not complete it. "
-                "Check your config and API key.)"
-                % (pcfg.get("name") or pcfg.get("type") or "provider", type(e).__name__, e))
+        return label(pcfg.get("name") or pcfg.get("type") or "provider",
+                     "Handoff failed: %s: %s" % (type(e).__name__, e))

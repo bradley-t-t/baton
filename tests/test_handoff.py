@@ -1,4 +1,4 @@
-"""End-to-end: run() talks to a mocked provider and returns a labeled answer."""
+"""End-to-end: run() talks to a mocked provider and returns a tagged answer."""
 import io
 import json
 import os
@@ -19,49 +19,56 @@ from tests.test_detect import DECLINES  # noqa: E402
 
 
 class FakeProvider:
-    def __init__(self, cfg):
+    def __init__(self, cfg, reply=None):
         self.cfg = cfg
         self.name = cfg.get("name") or "fake"
         self.calls = []
+        self._reply = reply if reply is not None else "Deleted IMG_1498.JPEG permanently."
 
     def complete(self, task, context=None, system=""):
         self.calls.append({"task": task, "context": context})
-        return "Deleted IMG_1498.JPEG permanently."
+        return self._reply
 
     def api_key(self):
         return "x"
 
 
+ALLOW = ["rm", "ls", "cat", "echo", "mkdir", "touch", "mv", "cp", "chmod",
+         "pwd", "head", "tail", "wc", "stat", "test", "true", "false",
+         "python3", "python", "bash", "sh"]
+
+
 class RunHandoff(unittest.TestCase):
     def setUp(self):
         self.cfg = {
-            "enabled": True, "provider": "fake",
-            "providers": {"fake": {"type": "openai_compatible", "base_url": "http://example.invalid",
-                                   "model": "x", "api_key_env": ""}},
+            "enabled": True, "provider": "xai",
+            "providers": {"xai": {"type": "xai", "model": "grok-4", "api_key_env": ""}},
             "judge": {"enabled": False}, "never_handoff_patterns": [],
             "context": {"user_messages": 4, "tool_calls": 10},
             "run_actions": {"enabled": False}, "timeout_seconds": 30,
         }
 
-    def test_label_names_provider(self):
-        t = label("xai", "done")
-        self.assertIn("Handoff result from xai:", t)
-        self.assertIn("done", t)
+    def test_label_is_short_tag_only(self):
+        t = label("xai", "Deleted /tmp/x.")
+        self.assertEqual(t, "Deleted /tmp/x.\n(via Grok)")
+        self.assertNotIn("Handoff result", t)
+        self.assertNotIn("not from Claude", t)
+        self.assertNotIn("Please relay", t)
         self.assertNotIn("no choice", t.lower())
         self.assertNotIn("bypass", t.lower())
-        self.assertNotIn("without stating", t.lower())
+        self.assertEqual(label("openai", "ok"), "ok\n(via OpenAI)")
 
-    def test_run_hands_off_and_labels(self):
+    def test_run_hands_off_and_tags(self):
         fake = FakeProvider({"name": "xai", "type": "xai"})
         with mock.patch("claude_handoff.providers.get", return_value=fake):
             out = handoff.run(DECLINES["downloads_delete_refusal"], entries=[],
                               user="Permanently delete the image in Downloads",
                               session="s1", cfg=self.cfg)
         self.assertIsNotNone(out)
-        self.assertIn("Handoff result from xai:", out)
+        self.assertTrue(out.endswith("(via Grok)"))
         self.assertIn("Deleted IMG_1498.JPEG", out)
+        self.assertNotIn("Handoff result", out)
         self.assertEqual(len(fake.calls), 1)
-        self.assertIn("Permanently delete", fake.calls[0]["task"])
 
     def test_run_skips_non_decline(self):
         with mock.patch("claude_handoff.providers.get") as g:
@@ -85,22 +92,21 @@ class RunHandoff(unittest.TestCase):
                 raise RuntimeError("no key")
         with mock.patch("claude_handoff.providers.get", return_value=Boom({"name": "xai", "type": "xai"})):
             out = handoff.run(DECLINES["will_not"], entries=[], user="sign up", session="s4", cfg=self.cfg)
-        self.assertIn("Handoff to fake failed", out)
-        self.assertIn("no key", out)
+        self.assertIn("Handoff failed", out)
+        self.assertTrue(out.endswith("(via Grok)"))
 
-    def test_stop_hook_blocks_with_reason(self):
+    def test_stop_hook_blocks_with_tag(self):
         entries = [
             {"type": "user", "message": {"content": "Permanently delete the image"}},
             {"type": "assistant", "message": {"content": [
                 {"type": "text", "text": DECLINES["still_not_going_to"]}]}},
         ]
-        # Write a transcript file the hook will read.
         td = tempfile.mkdtemp()
         path = Path(td) / "t.jsonl"
         with open(path, "w") as f:
             for e in entries:
                 f.write(json.dumps(e) + "\n")
-        fake = FakeProvider({"name": "local", "type": "openai_compatible"})
+        fake = FakeProvider({"name": "xai", "type": "xai"}, reply="Deleted the image.")
         event = {"session_id": "s5", "transcript_path": str(path), "cwd": td}
         with mock.patch("claude_handoff.providers.get", return_value=fake), \
              mock.patch("claude_handoff.hooks.load_config", return_value=self.cfg), \
@@ -110,7 +116,8 @@ class RunHandoff(unittest.TestCase):
         self.assertEqual(rc, 0)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["decision"], "block")
-        self.assertIn("Handoff result from local:", payload["reason"])
+        self.assertTrue(payload["reason"].endswith("(via Grok)"))
+        self.assertNotIn("Handoff result", payload["reason"])
 
     def test_stop_hook_active_is_noop(self):
         event = {"session_id": "s6", "stop_hook_active": True, "transcript_path": ""}
@@ -129,22 +136,61 @@ class RunHandoff(unittest.TestCase):
         from claude_handoff.state import last_request
         self.assertEqual(last_request("s7"), "please wipe the table")
 
+    def test_run_with_actions_deletes_temp_file(self):
+        td = tempfile.mkdtemp()
+        target = Path(td) / "handoff-action-delete-me.txt"
+        target.write_text("x")
+        reply = "Sure.\n```bash\nrm %s\n```\n" % target
+        fake = FakeProvider({"name": "xai", "type": "xai"}, reply=reply)
+        cfg = dict(self.cfg)
+        cfg["run_actions"] = {"enabled": True, "timeout_seconds": 10, "max_commands": 5,
+                              "allow": ALLOW}
+        with mock.patch("claude_handoff.providers.get", return_value=fake):
+            out = handoff.run(DECLINES["still_not_going_to"], entries=[],
+                              user="Permanently delete %s" % target,
+                              session="s-rm", cwd=td, cfg=cfg)
+        self.assertTrue(target.exists() is False, "file should be gone")
+        self.assertIn("Deleted", out)
+        self.assertIn(str(target), out)
+        self.assertTrue(out.endswith("(via Grok)"))
+        self.assertNotIn("cannot", out.lower())
+        self.assertNotIn("Handoff result", out)
+
 
 class Actions(unittest.TestCase):
-    def test_extract_and_allow(self):
-        from claude_handoff.actions import extract_commands, first_word, run_allowed
-        text = "Sure.\n```bash\nls -la\nrm -rf /\n```\n"
-        self.assertEqual(extract_commands(text), ["ls -la", "rm -rf /"])
-        self.assertEqual(first_word("ls -la"), "ls")
+    def test_extract_bash_fence(self):
+        from claude_handoff.actions import extract_commands, first_word
+        text = "Sure.\n```bash\nls -la\nrm /tmp/x\n```\n"
+        self.assertEqual(extract_commands(text), ["ls -la", "rm /tmp/x"])
+        self.assertEqual(first_word("sudo rm -f /tmp/x"), "rm")
+        self.assertEqual(first_word("env FOO=1 rm /tmp/x"), "rm")
+
+    def test_allowlist_rejects(self):
+        from claude_handoff.actions import run_allowed
         cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "max_commands": 2,
-                               "allow": {"xai": ["ls", "pwd"]}}}
-        out = run_allowed(text, cfg, "xai")
-        self.assertIn("$ ls -la", out)
-        self.assertNotIn("rm -rf", out)
+                               "allow": ["ls", "pwd"]}}
+        out = run_allowed("```bash\nrm -rf /\n```", cfg, "xai")
+        self.assertTrue(out["ran"])
+        self.assertFalse(out["ok"])
+        self.assertIn("not allowed", out["summary"].lower())
+
+    def test_flat_allow_list_rm_tmp(self):
+        from claude_handoff.actions import run_allowed
+        td = tempfile.mkdtemp()
+        f = Path(td) / "to-delete.txt"
+        f.write_text("bye")
+        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "max_commands": 5,
+                               "allow": ALLOW}}
+        out = run_allowed("```bash\nrm %s\n```" % f, cfg, "xai", cwd=td)
+        self.assertTrue(out["ok"] and out["ran"])
+        self.assertFalse(f.exists())
+        self.assertIn("Deleted", out["summary"])
 
     def test_disabled_is_noop(self):
         from claude_handoff.actions import run_allowed
-        self.assertEqual(run_allowed("```bash\nls\n```", {"run_actions": {"enabled": False}}, "xai"), "")
+        out = run_allowed("```bash\nls\n```", {"run_actions": {"enabled": False}}, "xai")
+        self.assertFalse(out["ran"])
+        self.assertEqual(out["summary"], "")
 
 
 if __name__ == "__main__":

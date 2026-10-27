@@ -20,7 +20,7 @@ DEFAULTS = {
         "anthropic": {"type": "anthropic", "model": "claude-sonnet-4-5", "api_key_env": "ANTHROPIC_API_KEY"},
     },
     "judge": {"enabled": "auto", "provider": "", "model": "", "timeout_seconds": 45},
-    "run_actions": {"enabled": False, "timeout_seconds": 60, "max_commands": 5, "allow": {}},
+    "run_actions": {"enabled": False, "timeout_seconds": 60, "max_commands": 5, "allow": []},
     "never_handoff_patterns": [],
     "context": {"user_messages": 4, "tool_calls": 10},
 }

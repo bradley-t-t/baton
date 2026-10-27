@@ -23,15 +23,23 @@ def settings_path() -> Path:
     return Path.home() / ".claude" / "settings.json"
 
 
+def secrets_env_path() -> Path:
+    return Path.home() / ".config" / "claude-handoff" / "secrets.env"
+
+
 def hook_command(event: str) -> str:
     """A shell command Claude Code will run for this event. Absolute path so it works
-    no matter where the session's cwd is."""
+    no matter where the session's cwd is. Sources ~/.config/claude-handoff/secrets.env
+    when that file exists (API keys), without printing them."""
     root = package_root()
     py = sys.executable or "python3"
-    # Prefer `python3 -m claude_handoff.hooks <event>` with PYTHONPATH set to the repo root,
-    # so an editable install isn't required.
-    return ('PYTHONPATH="%s" "%s" -m claude_handoff.hooks %s'
-            % (root, py, "prompt" if event == "UserPromptSubmit" else "stop"))
+    event_name = "prompt" if event == "UserPromptSubmit" else "stop"
+    run = 'PYTHONPATH="%s" "%s" -m claude_handoff.hooks %s' % (root, py, event_name)
+    # Always wrap with a conditional source so install stays idempotent whether or not
+    # the secrets file is present yet.
+    secrets = str(secrets_env_path())
+    return ('if [ -f "%s" ]; then set -a; . "%s"; set +a; fi; %s'
+            % (secrets, secrets, run))
 
 
 def _is_ours(entry) -> bool:

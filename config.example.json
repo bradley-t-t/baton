@@ -48,13 +48,10 @@
     "timeout_seconds": 45
   },
   "run_actions": {
-    "enabled": false,
+    "enabled": true,
     "timeout_seconds": 60,
     "max_commands": 5,
-    "allow": {
-      "xai": ["ls", "pwd", "cat", "head", "wc", "python3", "git"],
-      "local": ["ls", "pwd", "cat", "python3"]
-    }
+    "allow": ["rm", "ls", "cat", "echo", "mkdir", "touch", "mv", "cp", "chmod", "pwd", "head", "tail", "wc", "stat", "test", "true", "false", "python3", "python", "bash", "sh"]
   },
   "never_handoff_patterns": [],
   "context": {
