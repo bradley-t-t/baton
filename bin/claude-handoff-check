@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Absolute wrapper so Claude has one command for the draft check.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SECRETS="${HOME}/.config/claude-handoff/secrets.env"
+if [ -f "$SECRETS" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SECRETS"
+  set +a
+fi
+# Prefer a concrete interpreter when present (Mac homebrew); else python3.
+if [ -x /opt/homebrew/opt/python@3.14/bin/python3.14 ]; then
+  PY=/opt/homebrew/opt/python@3.14/bin/python3.14
+elif [ -x /opt/homebrew/bin/python3 ]; then
+  PY=/opt/homebrew/bin/python3
+else
+  PY="${PYTHON:-python3}"
+fi
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PY" -m claude_handoff.cli check "$@"

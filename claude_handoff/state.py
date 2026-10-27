@@ -125,3 +125,27 @@ def bump_expectation_retry(session: str) -> dict:
     save("expectations.json", data)
     return rec
 
+
+def _draft_key(session: str, draft: str) -> str:
+    return hashlib.sha1(((session or "") + "\0" + (draft or "").rstrip()).encode()).hexdigest()
+
+
+def mark_cleared(session: str, draft: str):
+    """A draft the check already cleared — Stop must not hand it off again."""
+    data = load("cleared.json", {})
+    keys = data.get(session or "-") or []
+    k = _draft_key(session, draft)
+    if k not in keys:
+        data[session or "-"] = (keys + [k])[-200:]
+        # prune old sessions
+        if len(data) > 200:
+            # keep insertion order roughly by trimming arbitrary extras
+            for old in list(data)[: len(data) - 200]:
+                data.pop(old, None)
+        save("cleared.json", data)
+
+
+def is_cleared(session: str, draft: str) -> bool:
+    keys = (load("cleared.json", {}) or {}).get(session or "-") or []
+    return _draft_key(session, draft) in keys
+

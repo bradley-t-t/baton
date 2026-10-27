@@ -27,3 +27,6 @@ claude-handoff = "claude_handoff.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["claude_handoff*"]
+
+[tool.setuptools.package-data]
+claude_handoff = ["check-step.md"]

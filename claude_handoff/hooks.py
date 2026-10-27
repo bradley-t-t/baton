@@ -2,10 +2,8 @@
 
 Claude Code feeds each hook a JSON object on stdin and reads JSON (or nothing) on stdout.
 
-  UserPromptSubmit  -> remember the person's request for this session
-  Stop              -> if the final reply is a decline, hand it off, wait, and block the stop
-                       with an exact-relay instruction so Claude's visible reply is only the
-                       handoff body plus the (via …) tag
+  UserPromptSubmit  -> remember the request AND inject the draft-check step
+  Stop              -> backstop: decline→handoff→exact-relay; allow when check already cleared
 """
 
 from __future__ import annotations
@@ -13,12 +11,14 @@ from __future__ import annotations
 import json
 import sys
 
+from .check import check_step_text
 from .config import load as load_config
 from .handoff import matches_expectation, relay_instruction, run
 from .state import (
     bump_expectation_retry,
     clear_expectation,
     get_expectation,
+    is_cleared,
     last_request,
     log,
     remember_request,
@@ -51,7 +51,13 @@ def on_prompt():
     if prompt:
         remember_request(session, str(prompt))
         log("prompt session=%s chars=%d" % (session[:8], len(str(prompt))))
-    return None
+    step = check_step_text()
+    if not step:
+        return None
+    return {"hookSpecificOutput": {
+        "hookEventName": "UserPromptSubmit",
+        "additionalContext": step,
+    }}
 
 
 def _reply_from(data: dict, entries) -> str:
@@ -62,12 +68,6 @@ def _reply_from(data: dict, entries) -> str:
 
 
 def _check_expectation(session: str, reply: str):
-    """If a handoff is waiting to be relayed exactly, enforce it.
-
-    Returns:
-      {"decision":"block","reason":...} to re-prompt,
-      None to allow stop (match, or retries exhausted / nothing pending).
-    """
     rec = get_expectation(session)
     if not rec:
         return None
@@ -76,7 +76,6 @@ def _check_expectation(session: str, reply: str):
         clear_expectation(session)
         log("relay matched session=%s chars=%d" % (session[:8], len(expected)))
         return None
-    # Mismatch: re-block up to max_retries times, then allow stop.
     retries = int(rec.get("retries") or 0)
     max_retries = int(rec.get("max_retries") or 3)
     if retries >= max_retries:
@@ -96,16 +95,15 @@ def on_stop():
     entries = load_transcript(path)
     reply = _reply_from(data, entries)
 
-    # Always enforce an outstanding exact-relay expectation, even when
-    # stop_hook_active is true (that flag used to short-circuit and let narration through).
     if get_expectation(session):
-        outcome = _check_expectation(session, reply)
-        # Match / give-up → allow stop. Mismatch → re-block. Never hand off again here.
-        return outcome
+        return _check_expectation(session, reply)
 
-    # No expectation pending. stop_hook_active means Claude Code is re-running Stop
-    # after a prior block with no stored expectation — do nothing (avoid loops).
     if data.get("stop_hook_active"):
+        return None
+
+    # Draft check already cleared this exact reply — do not hand it off again.
+    if reply and is_cleared(session, reply):
+        log("stop cleared-by-check session=%s" % session[:8])
         return None
 
     cfg = load_config()
@@ -116,7 +114,6 @@ def on_stop():
     result = run(reply, entries=entries, user=user, history=entries, cwd=cwd, session=session, cfg=cfg)
     if not result:
         return None
-    # Store the exact user-facing text; block with an exact-relay instruction.
     set_expectation(session, result)
     reason = relay_instruction(result)
     log("stop blocked session=%s chars=%d (exact relay)" % (session[:8], len(result)))

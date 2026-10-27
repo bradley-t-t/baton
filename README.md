@@ -75,6 +75,25 @@ claude-handoff test --provider local
 </details>
 
 <details>
+<summary>Draft check (before send)</summary>
+
+Before every reply, Claude writes the draft to a scratch file and runs:
+
+```bash
+bin/claude-handoff-check <file>
+# or: python3 -m claude_handoff.cli check <file>
+```
+
+- Clear → `claude-handoff: clear. Send this draft word for word.` (then Tether's check, if installed).
+- Decline → hands off, runs allowed actions, prints `do NOT send your draft` plus the exact replacement ending in `(via Grok)`. The refusal never becomes the sent reply.
+- The Stop hook remains a backstop if Claude skips the check.
+
+The UserPromptSubmit hook injects this step as `additionalContext` (same pattern as Tether).
+
+
+</details>
+
+<details>
 <summary>Running commands</summary>
 
 If you asked for a task rather than a question, the provider can answer with commands in a fenced `bash` block:

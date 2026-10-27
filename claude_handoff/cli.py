@@ -10,7 +10,7 @@ import sys
 def main(argv=None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     p = argparse.ArgumentParser(prog="claude-handoff",
-                                description="Hand a declined Claude Code request to another AI provider.")
+                                description="Hand a declined Claude Code request to another AI; draft check before send.")
     sub = p.add_subparsers(dest="cmd")
 
     sub.add_parser("install", help="Add hooks to ~/.claude/settings.json")
@@ -23,6 +23,11 @@ def main(argv=None) -> int:
     # Hook entry points (also available as `python3 -m claude_handoff.hooks`)
     sub.add_parser("prompt", help="UserPromptSubmit hook (stdin JSON)")
     sub.add_parser("stop", help="Stop hook (stdin JSON)")
+    c = sub.add_parser("check", help="Judge a draft file before Claude sends it")
+    c.add_argument("file", help="Path to the draft file")
+    c.add_argument("--session", default="", help="Override CLAUDE_CODE_SESSION_ID")
+    c.add_argument("--cwd", default="", help="Working directory for run_actions")
+    c.add_argument("--transcript", default="", help="Transcript JSONL path")
 
     args = p.parse_args(argv)
     if not args.cmd:
@@ -78,6 +83,11 @@ def main(argv=None) -> int:
     if args.cmd in ("prompt", "stop"):
         from . import hooks
         return hooks.main([args.cmd])
+
+    if args.cmd == "check":
+        from .check import check
+        return check(args.file, session=args.session, cwd=args.cwd,
+                     transcript=args.transcript)
 
     p.print_help()
     return 2
