@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-handoff"
+version = "0.1.0"
+description = "When Claude Code declines a request, hand it to another AI provider and bring the answer back."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Trenton Taylor" }]
+keywords = ["claude", "claude-code", "handoff", "xai", "grok", "openai", "ollama"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.scripts]
+claude-handoff = "claude_handoff.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["claude_handoff*"]

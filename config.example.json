@@ -1,0 +1,64 @@
+{
+  "enabled": true,
+  "provider": "xai",
+  "timeout_seconds": 300,
+  "deliver": "block",
+  "providers": {
+    "xai": {
+      "type": "xai",
+      "model": "grok-4",
+      "api_key_env": "XAI_API_KEY"
+    },
+    "openai": {
+      "type": "openai",
+      "model": "gpt-5",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "local": {
+      "type": "openai_compatible",
+      "base_url": "http://localhost:11434/v1",
+      "model": "llama3.1",
+      "api_key_env": ""
+    },
+    "lmstudio": {
+      "type": "openai_compatible",
+      "base_url": "http://localhost:1234/v1",
+      "model": "local-model",
+      "api_key_env": ""
+    },
+    "anthropic": {
+      "type": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    "queue": {
+      "type": "github_issue",
+      "repo": "OWNER/REPO",
+      "assignee": "",
+      "labels": ["handoff"],
+      "api_key_env": "GITHUB_TOKEN",
+      "timeout_seconds": 540,
+      "poll_seconds": 10
+    }
+  },
+  "judge": {
+    "enabled": "auto",
+    "provider": "",
+    "model": "",
+    "timeout_seconds": 45
+  },
+  "run_actions": {
+    "enabled": false,
+    "timeout_seconds": 60,
+    "max_commands": 5,
+    "allow": {
+      "xai": ["ls", "pwd", "cat", "head", "wc", "python3", "git"],
+      "local": ["ls", "pwd", "cat", "python3"]
+    }
+  },
+  "never_handoff_patterns": [],
+  "context": {
+    "user_messages": 4,
+    "tool_calls": 10
+  }
+}

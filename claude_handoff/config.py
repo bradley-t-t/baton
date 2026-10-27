@@ -1,0 +1,101 @@
+"""Configuration: ~/.config/claude-handoff/config.json, with environment overrides."""
+
+from __future__ import annotations
+
+import copy
+import json
+import os
+from pathlib import Path
+
+DEFAULTS = {
+    "enabled": True,
+    "provider": "xai",
+    "timeout_seconds": 300,
+    "deliver": "block",
+    "providers": {
+        "xai": {"type": "xai", "model": "grok-4", "api_key_env": "XAI_API_KEY"},
+        "openai": {"type": "openai", "model": "gpt-5", "api_key_env": "OPENAI_API_KEY"},
+        "local": {"type": "openai_compatible", "base_url": "http://localhost:11434/v1",
+                  "model": "llama3.1", "api_key_env": ""},
+        "anthropic": {"type": "anthropic", "model": "claude-sonnet-4-5", "api_key_env": "ANTHROPIC_API_KEY"},
+    },
+    "judge": {"enabled": "auto", "provider": "", "model": "", "timeout_seconds": 45},
+    "run_actions": {"enabled": False, "timeout_seconds": 60, "max_commands": 5, "allow": {}},
+    "never_handoff_patterns": [],
+    "context": {"user_messages": 4, "tool_calls": 10},
+}
+
+
+def config_path() -> Path:
+    p = os.environ.get("CLAUDE_HANDOFF_CONFIG")
+    if p:
+        return Path(os.path.expanduser(p))
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "claude-handoff" / "config.json"
+
+
+def state_dir() -> Path:
+    p = os.environ.get("CLAUDE_HANDOFF_STATE")
+    if p:
+        return Path(os.path.expanduser(p))
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "claude-handoff"
+
+
+def _merge(base: dict, over: dict) -> dict:
+    out = copy.deepcopy(base)
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict) and k != "allow":
+            out[k] = _merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def _bool(v: str):
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def load(path: Path = None) -> dict:
+    path = path or config_path()
+    try:
+        user = json.loads(path.read_text())
+        if not isinstance(user, dict):
+            user = {}
+    except (OSError, ValueError):
+        user = {}
+    c = _merge(DEFAULTS, user)
+    env = os.environ
+    if env.get("CLAUDE_HANDOFF") is not None and env.get("CLAUDE_HANDOFF") != "":
+        c["enabled"] = _bool(env["CLAUDE_HANDOFF"])
+    if env.get("CLAUDE_HANDOFF_PROVIDER"):
+        c["provider"] = env["CLAUDE_HANDOFF_PROVIDER"]
+    if env.get("CLAUDE_HANDOFF_TIMEOUT"):
+        try:
+            c["timeout_seconds"] = int(env["CLAUDE_HANDOFF_TIMEOUT"])
+        except ValueError:
+            pass
+    if env.get("CLAUDE_HANDOFF_JUDGE"):
+        c["judge"]["enabled"] = _bool(env["CLAUDE_HANDOFF_JUDGE"])
+    if env.get("CLAUDE_HANDOFF_RUN_ACTIONS"):
+        c["run_actions"]["enabled"] = _bool(env["CLAUDE_HANDOFF_RUN_ACTIONS"])
+    p = provider_config(c)
+    if env.get("CLAUDE_HANDOFF_MODEL") and p is not None:
+        p["model"] = env["CLAUDE_HANDOFF_MODEL"]
+    return c
+
+
+def provider_config(c: dict, name: str = None) -> dict:
+    """The named provider's settings (the active one by default), with its name filled in.
+    A name that isn't under "providers" but is a known type is used as that type."""
+    name = name or c.get("provider") or ""
+    p = (c.get("providers") or {}).get(name)
+    if p is None:
+        if name in ("xai", "openai", "openai_compatible", "anthropic", "github_issue"):
+            p = {"type": name}
+            c.setdefault("providers", {})[name] = p
+        else:
+            return None
+    p.setdefault("type", name)
+    p["name"] = name
+    return p

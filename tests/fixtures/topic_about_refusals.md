@@ -1,0 +1,1 @@
+Here's how the hook works. When Claude refuses a request, the Stop hook reads the reply, checks it for a refusal, and files a handoff. Safety checks and policy rules only apply to Claude, not to the handoff provider. The guardrail check runs before the reply is shown.
