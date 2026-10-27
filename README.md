@@ -4,7 +4,8 @@ When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) turns down a 
 
 It's for people who use Claude Code every day and would rather get an answer from somewhere else than a refusal. The answer ends with a short tag like `(via Grok)`, so you always know where it came from.
 
-## What it does
+<details>
+<summary>What it does</summary>
 
 - Spots refusals with a word scan, plus an optional quick model check for the ones the scan misses
 - Sends your request and a bit of recent context to the provider you picked
@@ -13,7 +14,10 @@ It's for people who use Claude Code every day and would rather get an answer fro
 
 You need Python 3.9 or later. It uses the standard library only.
 
-## Install
+</details>
+
+<details>
+<summary>Install</summary>
 
 ```bash
 git clone https://github.com/bradley-t-t/claude-handoff.git
@@ -29,7 +33,10 @@ claude-handoff status      # are the hooks installed?
 claude-handoff uninstall   # take them out
 ```
 
-## Pick a provider
+</details>
+
+<details>
+<summary>Pick a provider</summary>
 
 Edit `~/.config/claude-handoff/config.json` and set `"provider"` to one of these:
 
@@ -50,7 +57,10 @@ claude-handoff test
 claude-handoff test --provider local
 ```
 
-## Settings
+</details>
+
+<details>
+<summary>Settings</summary>
 
 | Variable | What it does |
 | :--- | :--- |
@@ -62,7 +72,10 @@ claude-handoff test --provider local
 | `CLAUDE_HANDOFF_CONFIG` | Path to the config file |
 | `CLAUDE_HANDOFF_STATE` | Where logs and state go (default `~/.local/state/claude-handoff`) |
 
-## Running commands
+</details>
+
+<details>
+<summary>Running commands</summary>
 
 If you asked for a task rather than a question, the provider can answer with commands in a fenced `bash` block:
 
@@ -74,7 +87,10 @@ rm /tmp/example.txt
 
 The block runs as a bash script in the folder Claude is working in, and every command in it has to be on the `run_actions` allow list or none of it runs. You get a short result like `Deleted /tmp/example.txt. (via Grok)`. The `config.example.json` that `install` copies turns this on with a short list of everyday commands. Set `run_actions.enabled` to `false` to turn it off.
 
-## Tests
+</details>
+
+<details>
+<summary>Tests</summary>
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -82,8 +98,13 @@ python3 -m unittest discover -s tests -v
 
 Everything is mocked, so no network is needed.
 
+</details>
+
 Built with Python, using only the standard library.
 
-## License
+<details>
+<summary>License</summary>
 
 MIT. See [LICENSE](LICENSE).
+
+</details>
