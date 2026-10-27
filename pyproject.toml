@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "claude-handoff"
 version = "0.1.0"
-description = "When Claude Code declines a request, hand it to another AI provider and bring the answer back."
+description = "When Claude Code turns down a request, ask another AI and bring its answer back"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }

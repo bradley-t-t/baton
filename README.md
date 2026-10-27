@@ -1,10 +1,10 @@
 # claude-handoff
 
-When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) declines a request — for any reason: rules, safety, policy, a moral line — **claude-handoff** catches the refusal, sends your original request to another AI you choose, waits for its answer, and has Claude relay that answer in place of the refusal.
+When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) turns down a request, claude-handoff sends your original request to another AI you pick (Grok, OpenAI, a local model, and so on), waits for the answer, and has Claude pass it along in place of the refusal.
 
-The relayed text is the provider's result plus a short trailing tag like `(via Grok)`. The Stop hook asks Claude to reply with that text character for character and re-blocks if Claude adds narration (up to 3 retries). No long disclaimer, no pressure on Claude, nothing that asks it to hide the handoff.
+The answer ends with a short tag like `(via Grok)`, so you always know where it came from.
 
-Works isolated from any other tooling. Stdlib only. Python 3.9+.
+Python 3.9 or later, standard library only.
 
 ## Install
 
@@ -15,53 +15,57 @@ python3 -m pip install -e .
 claude-handoff install
 ```
 
-`install` merges two hooks into `~/.claude/settings.json` (with a timestamped backup) and seeds `~/.config/claude-handoff/config.json` from `config.example.json` if you don't have one yet.
+`install` adds two hooks to `~/.claude/settings.json` (after backing it up) and creates `~/.config/claude-handoff/config.json` from `config.example.json` if you don't have one yet.
 
 ```bash
-claude-handoff status     # are the hooks in place?
-claude-handoff uninstall # remove them
+claude-handoff status      # are the hooks installed?
+claude-handoff uninstall   # take them out
 ```
 
-## Configure
+## Pick a provider
 
-Edit `~/.config/claude-handoff/config.json` (see `config.example.json`). Pick one provider:
+Edit `~/.config/claude-handoff/config.json` and set `"provider"` to one of these:
 
-| Provider key | Type | What it talks to | Key env |
-|---|---|---|---|
-| `xai` | `xai` | Grok via `https://api.x.ai/v1` | `XAI_API_KEY` |
-| `openai` | `openai` | OpenAI / Codex models | `OPENAI_API_KEY` |
-| `local` / `lmstudio` | `openai_compatible` | Any OpenAI-compatible base URL (Ollama, LM Studio, abliterated local models, vLLM, …) | usually none |
-| `anthropic` | `anthropic` | Anthropic Messages API | `ANTHROPIC_API_KEY` |
-| `queue` | `github_issue` | Files a GitHub issue, polls for a `## Handback` comment | `GITHUB_TOKEN` or `gh auth` |
+| Provider | Talks to | Key |
+| :--- | :--- | :--- |
+| `xai` | Grok at `https://api.x.ai/v1` | `XAI_API_KEY` |
+| `openai` | OpenAI models | `OPENAI_API_KEY` |
+| `local` / `lmstudio` | Any OpenAI-compatible server (Ollama, LM Studio, vLLM) | usually none |
+| `anthropic` | The Anthropic API | `ANTHROPIC_API_KEY` |
+| `queue` | Opens a GitHub issue and waits for a `## Handback` comment | `GITHUB_TOKEN` or `gh auth` |
 
-Set the active one with `"provider": "xai"` (or whichever you named). Environment overrides:
+Put API keys in `~/.config/claude-handoff/secrets.env` (for example `XAI_API_KEY=...`). The hooks load that file when it's there.
 
-- `CLAUDE_HANDOFF=0` — disable
-- `CLAUDE_HANDOFF_PROVIDER=local` — pick a provider
-- `CLAUDE_HANDOFF_MODEL=…` — override the model
-- `CLAUDE_HANDOFF_TIMEOUT=300` — Stop-hook wait, seconds
-- `CLAUDE_HANDOFF_JUDGE=0` — force the yes/no judge off
-- `CLAUDE_HANDOFF_CONFIG=/path/to.json` — config path
-- `CLAUDE_HANDOFF_STATE=/path/to/dir` — state / log dir (default `~/.local/state/claude-handoff`)
-
-Check connectivity:
+Then check it works:
 
 ```bash
-export XAI_API_KEY=…          # or whichever key your provider needs
 claude-handoff test
 claude-handoff test --provider local
 ```
 
+## Settings
+
+| Variable | What it does |
+| :--- | :--- |
+| `CLAUDE_HANDOFF=0` | Turns it off |
+| `CLAUDE_HANDOFF_PROVIDER` | Picks a provider for this run |
+| `CLAUDE_HANDOFF_MODEL` | Overrides the model |
+| `CLAUDE_HANDOFF_TIMEOUT` | How long to wait for an answer, in seconds (default 300) |
+| `CLAUDE_HANDOFF_JUDGE=0` | Turns off the extra refusal check |
+| `CLAUDE_HANDOFF_CONFIG` | Path to the config file |
+| `CLAUDE_HANDOFF_STATE` | Where logs and state go (default `~/.local/state/claude-handoff`) |
+
 ## How it works
 
-1. **Detect.** On every Claude Code turn, the `UserPromptSubmit` hook records your request. The `Stop` hook reads Claude's final reply from the session transcript. A first-person refusal (regex word scan) counts as a decline. An optional LLM yes/no judge can catch refusals the scan misses; it is `"auto"` by default (on only when a provider key is available) and is guarded by `CLAUDE_HANDOFF_JUDGE_ACTIVE` so it can never re-enter the handoff.
-2. **Hand off.** Your original request plus a short context (recent messages, recent tool calls) goes to the provider you configured.
-3. **Complete.** The provider returns text. With `run_actions` enabled it runs commands from a ```bash / ```sh fence whose first token is on the allow-list (a flat list, or a per-provider map), in the session's cwd, with `~` expanded. On success the person sees a clean line like `Deleted /path.` plus the `(via …)` tag.
-4. **Deliver.** The Stop hook waits up to `timeout_seconds`, then returns Claude Code's Stop-hook JSON `{"decision":"block","reason":…}` with the labeled answer. Claude relays it. A `stop_hook_active` flag and a per-reply seen-set stop loops: the same turn is never handed off twice.
+1. A hook saves your request, and another reads Claude's reply when it finishes.
+2. If the reply is a refusal, your request and a bit of recent context go to your provider. A word scan spots most refusals, and an optional quick model check catches the rest.
+3. The provider's answer comes back with its `(via ...)` tag, and Claude is asked to pass it along as is. The same reply is never handed off twice.
 
-## Run actions
+It skips replies that failed for a technical reason ("pytest isn't installed"), replies that got cut off, approvals you said no to, and questions about the handoff tool itself.
 
-When `run_actions.enabled` is true, the provider can complete shell/file tasks by returning exact commands in one fenced block:
+## Running commands
+
+If the request was a task rather than a question, the provider can answer with commands in a fenced `bash` block:
 
 ````
 ```bash
@@ -69,17 +73,7 @@ rm /tmp/example.txt
 ```
 ````
 
-The runner writes the fence body to a temp script and runs it with `bash` (quotes, loops, and `python3 -c` stay intact). Each simple command's first real token must be in `run_actions.allow` (flat list or per-provider map). Commands run in the Claude session's working directory; bash expands `~`. On success you get a short result (`Deleted /tmp/example.txt.` or `Created 5 files in ~/Downloads: …`) plus `(via Grok)`. On failure the block reason names the error and stops. Prefer `printf` redirects over nested `python3 -c` quotes when creating files.
-
-Put API keys in `~/.config/claude-handoff/secrets.env` (for example `XAI_API_KEY=…`). Install wraps the hooks so that file is sourced when present; the key is never printed.
-
-## Limits (deliberate)
-
-- The answer ends with a short `(via Grok)` / `(via <provider>)` tag. Nothing else is added.
-- Nothing here tells Claude it "has no choice," pressures it, or asks it to hide that a handoff happened.
-- Declines that are only a technical failure ("pytest isn't installed"), a filter/API cut-off, or the person saying no to an approval prompt are **not** handed off.
-- A message about the handoff tool itself ("why didn't the handoff fire?") is not handed off.
-- `run_actions` is off unless you turn it on and name an allow-list. There is no unrestricted shell.
+This is off by default. Turn on `run_actions` in the config and list the commands it's allowed to run (for every provider, or per provider). The block runs as a bash script in the session's working folder, and every command in it has to be on the list or none of it runs. You get a short result like `Deleted /tmp/example.txt. (via Grok)`.
 
 ## Tests
 
@@ -87,8 +81,8 @@ Put API keys in `~/.config/claude-handoff/secrets.env` (for example `XAI_API_KEY
 python3 -m unittest discover -s tests -v
 ```
 
-No network is required: providers are mocked.
+Everything is mocked, so no network is needed.
 
 ## License
 
-MIT. Copyright (c) 2026 Trenton Taylor.
+MIT
