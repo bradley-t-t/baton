@@ -6,6 +6,7 @@ from unittest import mock
 
 from baton import handoff
 from baton.detect import admits_block
+from baton.claude.transcript import current_turn, person_messages
 from baton.handoff import label
 from tests.helpers import (
     DECLINES, NOT_BLOCKED_ERRORS, SUPABASE_TIMEOUT, FakeProvider, call, handoff_cfg, run_actions,
@@ -200,6 +201,69 @@ class OverTheCap(unittest.TestCase):
         self.assertEqual(list(Path(self.td).glob("f*.txt")), [])
         self.assertEqual(out, "Nothing was run: the script had 8 commands and the limit "
                               "is 5 (run_actions.max_commands).\n(via Grok)")
+
+
+def person(text):
+    return {"type": "user", "message": {"role": "user", "content": text}}
+
+
+def assistant(text, **message):
+    return {"type": "assistant", "message": dict({"content": [{"type": "text", "text": text}]}, **message)}
+
+
+def classifier_turn():
+    """A turn cut off by the safety classifier, with the notice Claude Code adds after it."""
+    return [person("Wipe the staging database."),
+            assistant("I", stop_reason="refusal"),
+            person("Your response above was stopped by a safety classifier. Please try rephrasing."),
+            assistant("Understood.")]
+
+
+class OnlyThisTurn(unittest.TestCase):
+    def setUp(self):
+        self.cfg = handoff_cfg()
+
+    def reason(self, reply, entries):
+        return handoff.reason(reply, entries, cfg=self.cfg, use_judge=False)
+
+    def test_earlier_classifier_stop_does_not_block_a_later_decline(self):
+        entries = classifier_turn() + [person("Delete the old backups."), assistant("I'm still not doing it.")]
+        self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
+
+    def test_classifier_stop_this_turn_is_not_handed_off(self):
+        entries = [person("Delete the old backups.")] + classifier_turn()[1:]
+        self.assertIsNone(self.reason(DECLINES["bare_cant"], entries))
+
+    def test_classifier_notice_is_not_the_persons_message(self):
+        entries = classifier_turn()
+        self.assertEqual(person_messages(entries), ["Wipe the staging database."])
+        self.assertEqual(current_turn(entries), entries)
+
+    def test_earlier_no_does_not_block_a_later_decline(self):
+        entries = ([person("Run the migration.")] + call(NOT_BLOCKED_ERRORS["user_rejected"])
+                   + [person("Fine, delete the temp files then.")])
+        self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
+
+    def test_no_this_turn_still_skips(self):
+        entries = [person("Run the migration.")] + call(NOT_BLOCKED_ERRORS["user_rejected"])
+        self.assertIsNone(self.reason(DECLINES["bare_cant"], entries))
+
+    def test_earlier_holdback_does_not_block_a_later_decline(self):
+        held = "Holdback: held. This call would write a file. Never hand this off."
+        entries = ([person("Downloads I mean")] + call(held, tool="Write", inp={"file_path": "/tmp/x"})
+                   + [person("Now delete the temp files.")])
+        self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
+
+    def test_earlier_blocked_call_is_not_this_turns(self):
+        entries = [person("Clean the table.")] + call(SUPABASE_TIMEOUT) + [person("What's the weather?")]
+        self.assertIsNone(self.reason("It didn't run. The approval prompt timed out.", entries))
+
+    def test_early_exit_is_logged(self):
+        entries = [person("Delete the old backups.")] + classifier_turn()[1:]
+        with mock.patch("baton.handoff.log") as log:
+            self.reason(DECLINES["bare_cant"], entries)
+        self.assertIn("stopped by a classifier", " ".join(str(c) for c in log.call_args_list))
+
 
 if __name__ == "__main__":
     unittest.main()

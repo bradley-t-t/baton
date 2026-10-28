@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 
 from . import judge, providers, runner
-from .claude.transcript import blocked_calls, clip, interrupted, person_messages, said_no, tool_calls
+from .claude.transcript import blocked_calls, clip, current_turn, interrupted, person_messages, said_no, tool_calls
 from .config import load as load_config, provider_config
 from .detect import about_handoff, admits_block, holdback_held, is_decline, matches_any, skipped_check
 from .providers.base import DEFAULT_SYSTEM, display_name
@@ -34,17 +34,28 @@ def reason(reply: str, entries: list | None = None, user: str = "", cfg: dict | 
         return None
     user = user or _last_person_message(entries)
     never = cfg.get("never_handoff_patterns") or []
-    if about_handoff(user) or interrupted(entries) or said_no(entries):
+    if about_handoff(user):
+        log("no handoff: the message is about the handoff itself")
+        return None
+    # Only this turn counts. A classifier stop or a "no" from earlier in the session says
+    # nothing about the reply being checked now.
+    turn = current_turn(entries)
+    if interrupted(turn):
+        log("no handoff: this turn was stopped by a classifier, refusal or API error")
+        return None
+    if said_no(turn):
+        log("no handoff: the person turned down a tool call this turn")
         return None
     # Holdback already refused the write and said not to hand it off.
     if holdback_held(reply) or any(c.get("error") and holdback_held(c.get("result") or "")
-                                   for c in tool_calls(entries)):
+                                   for c in tool_calls(turn)):
+        log("no handoff: Holdback held this turn")
         return None
     if matches_any(reply, never) or matches_any(user, never):
         return None
     if is_decline(reply):
         return {"kind": "decline"}
-    blocked = blocked_calls(entries, never)
+    blocked = blocked_calls(turn, never)
     if blocked and admits_block(reply):
         return {"kind": "blocked", "blocked": blocked}
     if skipped_check(reply):
