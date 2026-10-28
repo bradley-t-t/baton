@@ -16,7 +16,7 @@ from .config import provider_config
 from .providers import get as get_provider
 from .state import log
 
-ACTIVE_ENV = ("BATON_JUDGE_ACTIVE", "CLAUDE_HANDOFF_JUDGE_ACTIVE")
+ACTIVE_ENV = "BATON_JUDGE_ACTIVE"
 
 DECLINE_SYSTEM = (
     "You read one reply an AI assistant gave a person and decide one thing: did the assistant decline, refuse, "
@@ -36,7 +36,7 @@ DECLINE_SYSTEM = (
 
 def active() -> bool:
     """True inside a judge call, so the judge never starts another handoff."""
-    return any(os.environ.get(v) for v in ACTIVE_ENV)
+    return bool(os.environ.get(ACTIVE_ENV))
 
 
 def enabled(cfg: dict) -> bool:

@@ -25,11 +25,6 @@ class BlockedDetection(unittest.TestCase):
                 {"type": "tool_result", "tool_use_id": "t2", "content": "[]"}]}}]
         self.assertEqual(blocked_calls(entries), [])
 
-    def test_never_handoff_patterns(self):
-        held = call(BLOCKED_ERRORS["hook_blocked"], tool="Edit",
-                    inp={"file_path": "/home/x/.claude/CLAUDE.md", "old_string": "a", "new_string": "b"})
-        self.assertEqual(blocked_calls(held, never_patterns=[r"CLAUDE\.md"]), [])
-
     def test_holdback_denial_is_not_blocked(self):
         held = ("Holdback: held. This call would write a file, and the person's message doesn't "
                 "tell you to do any work. Never hand this off.")

@@ -1,5 +1,5 @@
-"""What differs on Windows: where files live, file locks, background processes, the
-shell that runs a provider's script, and the user PATH.
+"""What differs on Windows: where files live, background processes, the shell that
+runs a provider's script, and the user PATH.
 
 Everything else in Baton is the same on every system. These functions decide at call
 time, so tests can stand in for Windows by patching os.name.
@@ -11,7 +11,6 @@ import ntpath
 import os
 import shutil
 import subprocess
-from contextlib import contextmanager
 from pathlib import Path
 
 # Process creation flags from the Windows API, spelled out so this module also loads
@@ -47,35 +46,6 @@ def state_home() -> Path:
     if windows() and os.environ.get("LOCALAPPDATA"):
         return Path(os.environ["LOCALAPPDATA"])
     return Path.home() / ".local" / "state"
-
-
-class Locked(Exception):
-    """Another process holds the lock."""
-
-
-@contextmanager
-def exclusive_lock(path: Path):
-    """Hold a lock on path while the block runs. Raises Locked at once when another
-    process holds it."""
-    with open(path, "a+") as f:
-        if windows():
-            import msvcrt
-            f.seek(0)
-            take, release = (lambda: msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1),
-                             lambda: msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1))
-        else:
-            import fcntl
-            take, release = (lambda: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB),
-                             lambda: fcntl.flock(f, fcntl.LOCK_UN))
-        try:
-            take()
-        except OSError:
-            raise Locked(str(path)) from None
-        try:
-            yield
-        finally:
-            f.seek(0)
-            release()
 
 
 def start_detached(command, **popen_args) -> subprocess.Popen:

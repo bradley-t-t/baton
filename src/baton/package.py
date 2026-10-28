@@ -17,7 +17,7 @@ from . import system
 
 REPO = "https://github.com/bradley-t-t/baton"
 BRANCH = "main"
-PACKAGE_NAMES = ("claude-baton", "baton", "claude-handoff")
+PACKAGE_NAMES = ("claude-baton", "baton")
 
 # Where pipx and uv usually live, for hooks that run with a short PATH. Folders that
 # don't exist are skipped, so one list serves every system.
@@ -136,6 +136,6 @@ def _installed_name() -> str:
             eps = metadata.distribution(name).entry_points
         except Exception:  # noqa: BLE001
             continue
-        if any(ep.value.startswith(("baton.", "claude_handoff.")) for ep in eps):
+        if any(ep.value.startswith("baton.") for ep in eps):
             return name
     return ""

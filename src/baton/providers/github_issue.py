@@ -17,7 +17,7 @@ from .base import Provider, ProviderError, http_json
 
 class GitHubIssueProvider(Provider):
     def token(self) -> str:
-        for v in (self.cfg.get("api_key_env") or "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "BATON_TOKEN", "CLAUDE_HANDOFF_TOKEN"):
+        for v in (self.cfg.get("api_key_env") or "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "BATON_TOKEN"):
             if os.environ.get(v):
                 return os.environ[v]
         for gh in ("gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"):
@@ -30,7 +30,7 @@ class GitHubIssueProvider(Provider):
         return ""
 
     def repo(self) -> str:
-        r = self.cfg.get("repo") or os.environ.get("BATON_REPO") or os.environ.get("CLAUDE_HANDOFF_REPO") or ""
+        r = self.cfg.get("repo") or os.environ.get("BATON_REPO") or ""
         if not r:
             raise ProviderError("github_issue: set providers.<name>.repo (owner/name)")
         return r

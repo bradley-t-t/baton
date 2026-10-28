@@ -8,8 +8,8 @@ from baton import handoff
 from baton.detect import admits_block
 from baton.claude.transcript import current_turn, person_messages
 from tests.helpers import (
-    DECLINES, NOT_BLOCKED_ERRORS, SUPABASE_TIMEOUT, FakeProvider, call, handoff_cfg, posix_only,
-    run_actions,
+    DECLINES, NOT_BLOCKED_ERRORS, SUPABASE_TIMEOUT, FakeProvider, call, handoff_cfg, judge_says,
+    posix_only, run_actions,
 )
 
 
@@ -23,25 +23,31 @@ class Reason(unittest.TestCase):
         self.cfg = handoff_cfg()
 
     def test_decline_is_handed_off(self):
-        self.assertEqual(handoff.reason(DECLINES["wipe_cant_run_it"], [], cfg=self.cfg),
-                         {"kind": "decline"})
+        with judge_says(True, task="run wipe.sql"):
+            self.assertEqual(handoff.reason(DECLINES["wipe_cant_run_it"], [], cfg=self.cfg),
+                             {"kind": "decline", "task": "run wipe.sql", "by": "judge"})
 
-    def test_topic_is_not(self):
-        self.assertIsNone(handoff.reason(
-            "Done. The migration ran. For reference, Claude once said \"I can't run it\".", [],
-            cfg=self.cfg))
+    def test_an_answer_is_not(self):
+        with judge_says(False):
+            self.assertIsNone(handoff.reason(
+                "Done. The migration ran and all 42 tests pass.", [], cfg=self.cfg))
 
     def test_nothing_without_a_provider(self):
-        self.assertIsNone(handoff.reason(DECLINES["bare_cant"], [], cfg=handoff_cfg(provider="")))
+        with judge_says(True):
+            self.assertIsNone(handoff.reason(DECLINES["bare_cant"], [],
+                                             cfg=handoff_cfg(provider="")))
 
     def test_about_handoff_skips(self):
-        self.assertIsNone(handoff.reason(
-            DECLINES["bare_cant"], user="Why didn't the handoff fire?", entries=[], cfg=self.cfg))
+        with judge_says(True):
+            self.assertIsNone(handoff.reason(
+                DECLINES["bare_cant"], user="Why didn't the handoff fire?", entries=[],
+                cfg=self.cfg))
 
     def test_api_error_turn_skips(self):
         entries = [{"type": "assistant", "isApiErrorMessage": True, "error": "overloaded", "message": {
             "content": [{"type": "text", "text": "API Error: Overloaded"}]}}]
-        self.assertIsNone(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg))
+        with judge_says(True):
+            self.assertIsNone(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg))
 
     def test_holdback_denial_is_not_handed_off(self):
         held = ("Holdback: held. This call would write a file, and the person's message doesn't "
@@ -50,15 +56,15 @@ class Reason(unittest.TestCase):
         reply = ("I didn't create any files in Downloads. Your Holdback hook blocked the write "
                  "because it read \"Downloads I mean\" as just a correction. Holdback says this "
                  "one must not be handed off.")
-        self.assertIsNone(handoff.reason(reply, entries, user="Downloads I mean", cfg=self.cfg))
+        with judge_says(True):
+            self.assertIsNone(handoff.reason(reply, entries, user="Downloads I mean",
+                                             cfg=self.cfg))
 
     def test_user_said_no_skips(self):
         entries = call(NOT_BLOCKED_ERRORS["user_rejected"])
-        self.assertIsNone(handoff.reason("I stopped because you said no.", entries, cfg=self.cfg))
-
-    def test_never_patterns_skip(self):
-        cfg = handoff_cfg(never_handoff_patterns=["wipe"])
-        self.assertIsNone(handoff.reason(DECLINES["bare_cant"], [], user="wipe the table", cfg=cfg))
+        with judge_says(True):
+            self.assertIsNone(handoff.reason("I stopped because you said no.", entries,
+                                             cfg=self.cfg))
 
     def test_blocked_call_with_admitting_reply(self):
         r = handoff.reason("It didn't run. The approval prompt timed out.", call(SUPABASE_TIMEOUT),
@@ -68,11 +74,13 @@ class Reason(unittest.TestCase):
 
     def test_blocked_but_reply_says_done_is_not(self):
         self.assertFalse(admits_block("Done. The script ran and deleted 0 rows."))
-        self.assertIsNone(handoff.reason("Done. The script ran and deleted 0 rows.",
-                                         call(SUPABASE_TIMEOUT), cfg=self.cfg))
+        with judge_says(False):
+            self.assertIsNone(handoff.reason("Done. The script ran and deleted 0 rows.",
+                                             call(SUPABASE_TIMEOUT), cfg=self.cfg))
 
     def test_admitted_skip_is_handed_off(self):
-        r = handoff.reason("Done. I skipped baton this time.", [], cfg=self.cfg)
+        r = handoff.reason("Done. I skipped baton this time.", [], cfg=self.cfg,
+                           use_judge=False)
         self.assertEqual(r, {"kind": "decline", "by": "skipped-check"})
 
     def test_admitted_skip_still_respects_the_gates(self):
@@ -114,7 +122,7 @@ class Respond(unittest.TestCase):
 
     def test_hands_off_and_shows_only_the_answer(self):
         fake = FakeProvider()
-        with mock.patch("baton.providers.get", return_value=fake):
+        with judge_says(True), mock.patch("baton.providers.get", return_value=fake):
             out = handoff.respond(DECLINES["downloads_delete_refusal"], [],
                                   "Permanently delete the image in Downloads", "", self.cfg)
         self.assertIn("Deleted IMG_1498.JPEG", out)
@@ -123,7 +131,7 @@ class Respond(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
 
     def test_skips_non_decline(self):
-        with mock.patch("baton.providers.get") as g:
+        with judge_says(False), mock.patch("baton.providers.get") as g:
             self.assertIsNone(handoff.respond("All 42 tests pass.", [], "run tests", "", self.cfg))
             g.assert_not_called()
 
@@ -131,7 +139,7 @@ class Respond(unittest.TestCase):
         class Boom(FakeProvider):
             def complete(self, *a, **k):
                 raise RuntimeError("no key")
-        with mock.patch("baton.providers.get", return_value=Boom()):
+        with judge_says(True), mock.patch("baton.providers.get", return_value=Boom()):
             out = handoff.respond(DECLINES["will_not"], [], "sign up", "", self.cfg)
         self.assertEqual(out, "Handoff failed: RuntimeError: no key")
 
@@ -140,13 +148,13 @@ class Respond(unittest.TestCase):
         td = tempfile.mkdtemp()
         target = Path(td) / "handoff-action-delete-me.txt"
         target.write_text("x")
-        fake = FakeProvider(reply="Sure.\n```bash\nrm %s\n```\n" % target)
+        fake = FakeProvider(reply="Deleted the file.\n```bash\nrm %s\n```\n" % target)
         cfg = handoff_cfg(**run_actions(cap=5))
-        with mock.patch("baton.providers.get", return_value=fake):
+        with judge_says(True), mock.patch("baton.providers.get", return_value=fake):
             out = handoff.respond(DECLINES["still_not_going_to"], [],
                                   "Permanently delete %s" % target, td, cfg)
         self.assertFalse(target.exists())
-        self.assertEqual(out, "Deleted %s." % target)
+        self.assertEqual(out, "Deleted the file.")
 
 
 @posix_only
@@ -175,22 +183,20 @@ class OverTheCap(unittest.TestCase):
         self.assertIn("at most 5 commands", seen[0]["system"])
         self.assertIn("printf", seen[0]["system"])
 
-    def test_asks_again_and_shows_the_result(self):
-        loop = ("```bash\nfor i in 1 2 3 4 5 6 7 8; do printf 'x\\n' > %s/f$i.txt; done\n```"
-                % self.td)
-        out, seen = self.run_with([eight(self.td), loop])
-        self.assertEqual(len(seen), 2)
-        self.assertIn("limit is 5", seen[1]["task"])
-        self.assertEqual(len(list(Path(self.td).glob("f*.txt"))), 8)
-        self.assertEqual(out, "Done.")
-        self.assertNotIn("Nothing was run", out)
-
-    def test_twice_says_nothing_ran(self):
-        out, seen = self.run_with([eight(self.td)] * 2)
-        self.assertEqual(len(seen), 2)
+    def test_asked_once_and_the_refusal_is_the_answer(self):
+        out, seen = self.run_with([eight(self.td)])
+        self.assertEqual(len(seen), 1)
         self.assertEqual(list(Path(self.td).glob("f*.txt")), [])
         self.assertEqual(out, "Nothing was run: the script had 8 commands and the limit "
                               "is 5 (run_actions.max_commands).")
+
+    def test_a_block_within_the_limits_runs(self):
+        loop = ("```bash\nfor i in 1 2 3 4 5 6 7 8; do printf 'x\\n' > %s/f$i.txt; done\n```"
+                % self.td)
+        out, seen = self.run_with([loop])
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(len(list(Path(self.td).glob("f*.txt"))), 8)
+        self.assertEqual(out, "Done.")
 
 
 def person(text):
@@ -213,20 +219,23 @@ class OnlyThisTurn(unittest.TestCase):
     def setUp(self):
         self.cfg = handoff_cfg()
 
-    def reason(self, reply, entries):
-        return handoff.reason(reply, entries, cfg=self.cfg, use_judge=False)
+    def reason(self, reply, entries, declined=True):
+        with judge_says(declined):
+            return handoff.reason(reply, entries, cfg=self.cfg)
 
     def test_earlier_classifier_stop_does_not_block_a_later_decline(self):
         entries = classifier_turn() + [person("Delete the old backups."), assistant("I'm still not doing it.")]
-        self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
+        self.assertEqual(self.reason(DECLINES["bare_cant"], entries),
+                         {"kind": "decline", "task": "", "by": "judge"})
 
     def test_decline_after_a_classifier_stop_this_turn_is_handed_off(self):
         entries = [person("Delete the old backups.")] + classifier_turn()[1:]
-        self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
+        self.assertEqual(self.reason(DECLINES["bare_cant"], entries),
+                         {"kind": "decline", "task": "", "by": "judge"})
 
     def test_answer_after_a_classifier_stop_this_turn_is_left_alone(self):
         entries = [person("Delete the old backups.")] + classifier_turn()[1:]
-        self.assertIsNone(self.reason("Understood.", entries))
+        self.assertIsNone(self.reason("Understood.", entries, declined=False))
 
     def test_classifier_notice_is_not_the_persons_message(self):
         entries = classifier_turn()
@@ -236,7 +245,8 @@ class OnlyThisTurn(unittest.TestCase):
     def test_earlier_no_does_not_block_a_later_decline(self):
         entries = ([person("Run the migration.")] + call(NOT_BLOCKED_ERRORS["user_rejected"])
                    + [person("Fine, delete the temp files then.")])
-        self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
+        self.assertEqual(self.reason(DECLINES["bare_cant"], entries),
+                         {"kind": "decline", "task": "", "by": "judge"})
 
     def test_no_this_turn_still_skips(self):
         entries = [person("Run the migration.")] + call(NOT_BLOCKED_ERRORS["user_rejected"])
@@ -246,11 +256,13 @@ class OnlyThisTurn(unittest.TestCase):
         held = "Holdback: held. This call would write a file. Never hand this off."
         entries = ([person("Downloads I mean")] + call(held, tool="Write", inp={"file_path": "/tmp/x"})
                    + [person("Now delete the temp files.")])
-        self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
+        self.assertEqual(self.reason(DECLINES["bare_cant"], entries),
+                         {"kind": "decline", "task": "", "by": "judge"})
 
     def test_earlier_blocked_call_is_not_this_turns(self):
         entries = [person("Clean the table.")] + call(SUPABASE_TIMEOUT) + [person("What's the weather?")]
-        self.assertIsNone(self.reason("It didn't run. The approval prompt timed out.", entries))
+        self.assertIsNone(self.reason("It didn't run. The approval prompt timed out.", entries,
+                                      declined=False))
 
     def test_early_exit_is_logged(self):
         entries = [person("Delete the old backups."), assistant("I won't"),

@@ -14,13 +14,11 @@ class Cli(Home):
         self.assertTrue(self.cfg_file.exists())
         self.assertEqual(len(self.ours("Stop")), 1)
 
-    def test_install_migrates_claude_handoff_files(self):
-        old = self.home / ".config" / "claude-handoff"
-        old.mkdir(parents=True)
-        (old / "config.json").write_text(json.dumps({"provider": "openai"}))
+    def test_install_keeps_an_existing_config(self):
+        self.cfg_file.parent.mkdir(parents=True)
+        self.cfg_file.write_text(json.dumps({"provider": "openai"}))
         rc, out = self.cli("install")
         self.assertEqual(rc, 0, out)
-        self.assertIn("Copied", out)
         self.assertEqual(json.loads(self.cfg_file.read_text())["provider"], "openai")
 
     def test_status_and_version(self):

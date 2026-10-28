@@ -100,7 +100,6 @@ class Setup(Home):
         cfg = json.loads(self.cfg_file.read_text())
         cfg["providers"]["xai"]["model"] = "grok-4.5"
         cfg["run_actions"].update({"allow": ["ls", "rm"], "max_commands": 7})
-        cfg["install"]["remove_old"] = False
         self.cfg_file.write_text(json.dumps(cfg))
         rc, out = self.cli("setup", "--provider", "grok", "--yes", "--no-test")
         self.assertEqual(rc, 0, out)
@@ -108,7 +107,6 @@ class Setup(Home):
         self.assertEqual(cfg["providers"]["xai"]["model"], "grok-4.5")
         self.assertEqual(cfg["run_actions"]["allow"], ["ls", "rm"])
         self.assertEqual(cfg["run_actions"]["max_commands"], 7)
-        self.assertFalse(cfg["install"]["remove_old"])
         # --reset puts the model and commands back to the defaults, keeps the rest.
         rc, out = self.cli("setup", "--provider", "grok", "--reset", "--yes", "--no-test")
         cfg = json.loads(self.cfg_file.read_text())
@@ -158,11 +156,11 @@ class Setup(Home):
         self.assertFalse(self.cfg_file.exists())
         self.assertFalse(self.settings.exists())
 
-    def test_keeps_other_hooks_and_replaces_claude_handoff(self):
+    def test_keeps_other_hooks_and_replaces_earlier_baton(self):
         self.settings.parent.mkdir(parents=True)
         other = {"hooks": [{"type": "command", "command": "other-tool stop"}]}
         old = {"hooks": [{"type": "command",
-                          "command": 'PYTHONPATH="/x" "python3" -m claude_handoff.hooks stop'}]}
+                          "command": 'PYTHONPATH="/x" "python3" -m baton.hooks stop'}]}
         self.settings.write_text(json.dumps({"hooks": {"Stop": [other, old]}}))
         rc, _ = self.cli("setup", "--provider", "local", "--yes", "--no-test")
         self.assertEqual(rc, 0)
@@ -171,17 +169,13 @@ class Setup(Home):
         self.assertNotIn(old, stop)
         self.assertEqual(len(self.ours("Stop")), 1)
 
-    def test_migrates_claude_handoff_config(self):
-        old = self.home / ".config" / "claude-handoff"
-        old.mkdir(parents=True)
-        (old / "config.json").write_text(json.dumps(
-            {"provider": "xai", "run_actions": {"enabled": True, "allow": ["ls"]},
-             "never_handoff_patterns": ["secret"]}))
-        (old / "secrets.env").write_text("XAI_API_KEY=k\n")
-        rc, out = self.cli("setup", "--provider", "grok", "--yes", "--no-test")
+    def test_an_existing_config_is_kept_not_reset(self):
+        self.cfg_file.parent.mkdir(parents=True)
+        self.cfg_file.write_text(json.dumps(
+            {"provider": "xai", "run_actions": {"enabled": True, "allow": ["ls"]}}))
+        rc, out = self.cli("setup", "--provider", "grok", "--api-key", "k", "--yes", "--no-test")
         self.assertEqual(rc, 0, out)
         cfg = json.loads(self.cfg_file.read_text())
-        self.assertEqual(cfg["never_handoff_patterns"], ["secret"])
         self.assertEqual(cfg["run_actions"]["allow"], ["ls"])  # kept, not reset
         self.assertTrue(cfg["run_actions"]["enabled"])
 

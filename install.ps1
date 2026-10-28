@@ -1,10 +1,9 @@
 # Install Baton on Windows: irm https://taylorurl.com/baton.ps1 | iex
 #
 # Installs the baton command with pipx or uv (installing uv into your home folder if
-# neither is there), removes an old pip install of claude-handoff, adds the bin folder
+# neither is there), removes an older pip install of Baton, adds the bin folder
 # to your user PATH, then runs `baton setup` and `baton doctor`. Nothing is installed
 # system-wide and administrator rights are never needed. Set
-# "install": {"remove_old": false} in %APPDATA%\baton\config.json to keep an old install.
 #
 # Arguments for `baton setup` need the script as a script block, for example:
 #   & ([scriptblock]::Create((irm https://taylorurl.com/baton.ps1))) --provider local --yes
@@ -76,7 +75,7 @@ function Invoke-Program([string]$Exe, [string[]]$Arguments) {
     [pscustomobject]@{ Code = $code; Output = @($out) }
 }
 
-# Pythons that might hold an old pip install of claude-handoff or baton. The python.exe
+# Pythons that might hold an old pip install of Baton. The python.exe
 # under WindowsApps can be the Store's placeholder, which opens the Store, so it's skipped.
 function Get-Pythons {
     $candidates = @()
@@ -103,42 +102,24 @@ function Get-Pythons {
 
 # Names of this project's packages installed with pip in that Python. PyPI has an
 # unrelated package called baton, so a name only counts when it was installed from a
-# folder or git (direct_url.json) and its command runs baton.cli or claude_handoff.
+# folder or git (direct_url.json) and its command runs baton.cli.
 $OldFinder = @'
 import sys
 try:
     from importlib import metadata
 except ImportError:
     sys.exit(0)
-for name in ("claude-handoff", "baton", "claude-baton"):
+for name in ("baton", "claude-baton"):
     try:
         d = metadata.distribution(name)
     except Exception:
         continue
     eps = [e.value for e in d.entry_points]
-    ours = any(v.startswith(("baton.cli", "claude_handoff.")) for v in eps)
-    if name == "claude-handoff" or (ours and d.read_text("direct_url.json")):
+    if any(v.startswith("baton.cli") for v in eps) and d.read_text("direct_url.json"):
         print(name)
 '@
 
-# "install": {"remove_old": false} in the config keeps an old install. Default: remove.
-function Test-RemoveOldWanted {
-    $cfg = $env:BATON_CONFIG
-    if (-not $cfg) {
-        $base = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { $env:APPDATA }
-        if (-not $base) { return $true }
-        $cfg = Join-Path (Join-Path $base 'baton') 'config.json'
-    }
-    if (-not (Test-Path -LiteralPath $cfg)) { return $true }
-    try {
-        $data = Get-Content -LiteralPath $cfg -Raw | ConvertFrom-Json
-    } catch {
-        return $true
-    }
-    return -not ($data.install -and $data.install.remove_old -eq $false)
-}
-
-function Remove-OldInstall([bool]$RemoveOld) {
+function Remove-OldInstall {
     Step 'Checking for an older install'
     $finder = Join-Path ([IO.Path]::GetTempPath()) ('baton-finder-{0}.py' -f [guid]::NewGuid())
     Set-Content -LiteralPath $finder -Value $OldFinder -Encoding ASCII
@@ -149,10 +130,6 @@ function Remove-OldInstall([bool]$RemoveOld) {
             if (-not $names) { continue }
             $found = $true
             Say "Found $($names -join ' ') installed with pip in $py"
-            if (-not $RemoveOld) {
-                Note 'Kept it (install.remove_old is false). Its baton command may hide the new one.'
-                continue
-            }
             $r = Invoke-Program $py (@('-m', 'pip', 'uninstall', '-y') + $names)
             if ($r.Code -eq 0) { Ok "Uninstalled $($names -join ' ')" }
             else { Note "Couldn't uninstall $($names -join ' '). Run: $py -m pip uninstall $($names -join ' ')" }
@@ -310,7 +287,7 @@ function Install-Baton([object[]]$Arguments) {
     Write-Host 'Baton installer' -ForegroundColor White
     try {
         if (-not $Tty) { Note 'No terminal found, so nothing will be asked.' }
-        Remove-OldInstall (Test-RemoveOldWanted)
+        Remove-OldInstall
         $how = Select-Installer
         $bin = Install-BatonPackage $how
         $baton = Find-Baton $bin

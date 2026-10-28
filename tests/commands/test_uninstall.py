@@ -32,11 +32,9 @@ class Uninstall(Home):
         state = self.home / ".local" / "state" / "baton"
         state.mkdir(parents=True)
         (state / "handoff.log").write_text("x")
-        old = self.home / ".config" / "claude-handoff"
-        old.mkdir()
         rc, out = self.cli("uninstall", "--purge", "--yes")
         self.assertEqual(rc, 0, out)
-        for p in (self.cfg_file.parent, state, old):
+        for p in (self.cfg_file.parent, state):
             self.assertFalse(p.exists(), p)
         self.assertEqual(self.hooks(), {"Stop": [self.other]})
         self.assertTrue(self.settings.exists())

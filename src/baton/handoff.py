@@ -11,7 +11,7 @@ from . import judge, providers, runner
 from .claude.transcript import (blocked_calls, clip, current_turn, person_messages, said_no, tool_calls,
                                 turn_end)
 from .config import load as load_config, provider_config
-from .detect import about_handoff, admits_block, holdback_held, is_decline, matches_any, skipped_check
+from .detect import about_handoff, admits_block, holdback_held, skipped_check
 from .providers.base import DEFAULT_SYSTEM
 from .state import log
 
@@ -35,7 +35,6 @@ def reason(reply: str, entries: list | None = None, user: str = "", cfg: dict | 
     if not enabled(cfg):
         return None
     user = user or _last_person_message(entries)
-    never = cfg.get("never_handoff_patterns") or []
     if about_handoff(user):
         log("no handoff: the message is about the handoff itself")
         return None
@@ -57,8 +56,6 @@ def reason(reply: str, entries: list | None = None, user: str = "", cfg: dict | 
                                    for c in tool_calls(turn)):
         log("no handoff: Holdback held this turn")
         return None
-    if matches_any(reply, never) or matches_any(user, never):
-        return None
     if end == "safeguards":
         # Anthropic's safeguards refused the turn, so Claude never answered. The request
         # is the person's own message, never the notice Claude Code adds after the stop.
@@ -67,9 +64,7 @@ def reason(reply: str, entries: list | None = None, user: str = "", cfg: dict | 
             return None
         log("safeguards stopped this turn; handing off the request")
         return {"kind": "safeguards"}
-    if is_decline(reply):
-        return {"kind": "decline"}
-    blocked = blocked_calls(turn, never)
+    blocked = blocked_calls(turn)
     if blocked and admits_block(reply):
         return {"kind": "blocked", "blocked": blocked}
     if skipped_check(reply):
@@ -133,14 +128,6 @@ def complete(r: dict, reply: str, user: str, cwd: str, entries: list,
     try:
         answer = provider.complete(task, ctx, system=system)
         ran = runner.run_reply(answer, cfg, provider.name, cwd=cwd)
-        if ran.get("not_run"):
-            # Over the cap or off the allow list: nothing ran. Ask once more within
-            # the limits rather than showing the rejection as the answer.
-            log("run_actions retry %s: %s" % (hid, ran.get("summary", "")[:200]))
-            retry = ("%s\n\nYour last script was not run. %s Send the task again as one "
-                     "block within the runner limits." % (task, ran.get("summary", "")))
-            answer = provider.complete(retry, ctx, system=system)
-            ran = runner.run_reply(answer, cfg, provider.name, cwd=cwd)
     except Exception as e:  # noqa: BLE001
         log("provider failed %s: %s: %s" % (hid, type(e).__name__, e))
         raise
@@ -151,8 +138,6 @@ def complete(r: dict, reply: str, user: str, cwd: str, entries: list,
     if not ran.get("ok"):
         log("run_actions failed %s: %s" % (hid, ran.get("summary", "")[:200]))
         return (ran["summary"] or "").strip()
-    # The runner's plain summary ("Deleted /path.") beats provider prose that may still
-    # hold fences or refusal wording.
     body = ran["summary"] or "Done."
     log("delivered %s from %s via actions (%d chars)" % (hid, provider.name, len(body)))
     return body.strip()

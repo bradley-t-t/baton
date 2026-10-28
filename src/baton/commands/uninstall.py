@@ -13,13 +13,13 @@ from pathlib import Path
 
 from .. import package, system, ui
 from ..claude import settings
-from ..config import config_dir, old_config_dir, state_dir
+from ..config import config_dir, state_dir
 
 
 def data_paths() -> list:
-    """Baton's own config and state folders, plus claude-handoff's if they're still there."""
+    """Baton's own config and state folders."""
     out = []
-    for p in (config_dir(), state_dir(), old_config_dir(), system.state_home() / "claude-handoff"):
+    for p in (config_dir(), state_dir()):
         if p not in out:
             out.append(p)
     return out
