@@ -148,12 +148,16 @@ def _updates(add) -> None:
             "itself. Reinstall with: " + package.install_command())
         return
     if not last.get("checked_at"):
-        add(OK, title, "Not checked for updates yet")
+        add(OK, title, "Not checked for updates yet; hooks check at most once a minute")
         return
-    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(float(last["checked_at"])))
+    checked = float(last["checked_at"])
+    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(checked))
     outcome = last.get("outcome") or "checking"
-    add(WARN if outcome.startswith("failed") else OK, title,
-        "Last update check %s: %s" % (when, outcome))
+    detail = "Last update check %s: %s" % (when, outcome)
+    if outcome.startswith("failed"):
+        detail += "; next try after %s" % time.strftime(
+            "%H:%M", time.localtime(checked + update.wait(last)))
+    add(WARN if outcome.startswith("failed") else OK, title, detail)
 
 
 def _command_problems(cmd: str) -> list:

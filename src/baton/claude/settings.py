@@ -47,8 +47,10 @@ def settings_path() -> Path:
 
 def hook_command(event: str) -> str:
     """The shell command Claude Code runs for this event. Paths are absolute so it
-    works from any cwd. API keys come from secrets.env and are never printed."""
-    run = 'PYTHONPATH="%s" "%s" -m baton.hooks %s' % (
+    works from any cwd. API keys come from secrets.env and are never printed. It
+    always exits 0, like the hooks themselves, so a hook that runs while an update is
+    reinstalling Baton is skipped instead of flagged as an error."""
+    run = 'PYTHONPATH="%s" "%s" -m baton.hooks %s || true' % (
         package_root(), sys.executable or "python3", HOOK_NAMES.get(event, "stop"))
     new, old = str(keys.secrets_path()), str(keys.old_secrets_path())
     return ('if [ -f "%s" ]; then set -a; . "%s"; set +a; '

@@ -81,7 +81,7 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 
 ## Updates
 
-Baton keeps itself up to date. About once a day a hook starts a background check of the version on `main`, and if it's newer, reinstalls with pipx or uv, whichever installed it (on Windows, a few seconds after Baton exits, since Windows won't replace a running program). Hooks never wait on it. `baton update` does it now, `baton update --check` only looks, and `baton doctor` shows the last check.
+Baton keeps itself up to date. As each hook finishes, at most once a minute, it starts a background check of the version on `main` (a conditional request, so an unchanged `main` costs GitHub nothing), and if `main` is newer, reinstalls with pipx or uv, whichever installed it. Hooks never wait on it, and the next hook already runs the new version; on Windows the reinstall starts a few seconds after Baton exits, since Windows won't replace a running program. After a failed check it waits 5 minutes, doubling up to an hour, and no check starts while an update is running. `baton update` does it now, `baton update --check` only looks, and `baton doctor` shows the last check.
 
 ## Config
 
