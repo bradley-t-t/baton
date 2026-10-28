@@ -25,7 +25,7 @@ Two Claude Code hooks, a draft check and a small state directory. One gate in `h
 2. **Detect.** The draft check runs on Claude's draft before it's sent. `Stop` is the backstop: it reads the final reply from the transcript and skips anything the check already cleared. A first-person refusal regex runs first. The optional judge asks a model yes or no for refusals the regex misses. It's `"auto"` by default, meaning on only when it has a key or the endpoint is local. The judge runs with `CLAUDE_HANDOFF_JUDGE_ACTIVE` set, which turns the handoff off inside it, so it can't recurse.
 3. **Filter.** Questions about the tool itself, interrupted replies, approvals you said no to and Holdback blocks are skipped. A reply that failed for a technical reason isn't a decline.
 4. **Hand off.** The request goes to the provider with a capped amount of context: the last 4 user messages and the last 10 tool calls, each clipped.
-5. **Deliver.** The hook returns `{"decision": "block", "reason": ...}` telling Claude to relay the answer word for word. It saves the expected text and checks Claude's next reply against it. On a mismatch it blocks again, up to 3 times, then lets the stop through.
+5. **Deliver.** The MessageDisplay hook replaces Claude's refusal on screen with the result and `(via Grok)`, and blanks any later text in that turn. The Stop hook never blocks, so the turn shows no "Hook re-prompted Claude" rows.
 
 Two things stop loops. Each `(session, reply)` key goes into a seen set (last 500). And a `stop_hook_active` Stop with nothing pending does nothing.
 
