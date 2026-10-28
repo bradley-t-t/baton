@@ -2,6 +2,8 @@
 
 When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) turns down a request, Baton sends it to another model you pick (Grok, OpenAI, Anthropic, a local server) and shows that answer where the refusal would have been.
 
+![The same request answered twice in Claude Code: without Baton it is declined with the command left for you to run, with Baton the provider's answer is drawn in its place](assets/baton-demo.gif)
+
 ## How a refusal becomes an answer
 
 Three hooks. `UserPromptSubmit` only remembers what you asked and adds nothing to Claude's context. `MessageDisplay` does the work. `Stop` is the backstop.
