@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import os
 import uuid
-from pathlib import Path
 
 from . import actions, judge
 from .config import load as load_config, provider_config
 from .detect import about_handoff, admits_block, holdback_held, is_decline, matches_any
-from .state import add_pending, drop_pending, log, mark_seen, pending, seen
+from .state import add_pending, drop_pending, log, mark_seen, seen
 from .transcript import blocked_calls, clip, interrupted, person_messages, said_no, tool_calls
 
 

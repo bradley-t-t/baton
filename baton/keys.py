@@ -82,12 +82,6 @@ def mode(path: Path = None):
         return None
 
 
-def has_key(env_name: str) -> bool:
-    if not env_name:
-        return True
-    return bool(os.environ.get(env_name) or read().get(env_name))
-
-
 def load_into_env():
     """Put keys from the secrets file into os.environ when they aren't set already."""
     for k, v in read().items():

@@ -44,4 +44,4 @@ version = { attr = "baton.__version__" }
 include = ["baton*", "claude_handoff*"]
 
 [tool.setuptools.package-data]
-baton = ["check-step.md", "config.example.json"]
+baton = ["config.example.json"]

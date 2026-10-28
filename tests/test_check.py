@@ -187,7 +187,7 @@ class DisplayHides(unittest.TestCase):
         event = {"session_id": "disp-3", "delta": narr, "final": True, "index": 0}
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
-            rc = on_display(event)
+            on_display(event)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["hookSpecificOutput"]["displayContent"], HIDDEN)
 
@@ -209,7 +209,7 @@ class DisplayHides(unittest.TestCase):
         }
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
-            rc = on_display(event)
+            on_display(event)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["hookSpecificOutput"]["displayContent"], expected.rstrip())
         self.assertIsNotNone(get_displayed("disp-force"))
@@ -355,7 +355,7 @@ class StopRefusalChance(unittest.TestCase):
         """If the chance text was already said this turn, second stop hands off."""
         from baton.state import (
             clear_expectation, clear_refusal_chance, clear_said, remember_request,
-            said_once, get_expectation,
+            said_once,
         )
         from baton.refusal import REFUSAL_CHANCE
         session = "chance-said"

@@ -75,10 +75,6 @@ def add_pending(hid: str, record: dict):
     save("pending.json", p)
 
 
-def pending() -> dict:
-    return load("pending.json", {})
-
-
 def drop_pending(hid: str):
     p = load("pending.json", {})
     if p.pop(hid, None) is not None:
@@ -113,19 +109,6 @@ def clear_expectation(session: str):
         save("expectations.json", data)
 
 
-def bump_expectation_retry(session: str) -> dict:
-    """Increment retries; return the updated record (or None if gone)."""
-    data = load("expectations.json", {})
-    rec = data.get(session or "-")
-    if not rec:
-        return None
-    rec = dict(rec)
-    rec["retries"] = int(rec.get("retries") or 0) + 1
-    data[session or "-"] = rec
-    save("expectations.json", data)
-    return rec
-
-
 def _draft_key(session: str, draft: str) -> str:
     return hashlib.sha1(((session or "") + "\0" + (draft or "").rstrip()).encode()).hexdigest()
 
@@ -150,27 +133,6 @@ def is_cleared(session: str, draft: str) -> bool:
     return _draft_key(session, draft) in keys
 
 
-
-MAX_CHECK_GATE_RETRIES = 3
-
-
-def get_check_gate(session: str) -> dict:
-    return load("check_gate.json", {}).get(session or "-") or {"retries": 0}
-
-
-def bump_check_gate(session: str) -> dict:
-    data = load("check_gate.json", {})
-    rec = dict(data.get(session or "-") or {})
-    rec["retries"] = int(rec.get("retries") or 0) + 1
-    rec["at"] = time.time()
-    data[session or "-"] = rec
-    if len(data) > 200:
-        for k in sorted(data, key=lambda k: data[k].get("at", 0))[: len(data) - 200]:
-            data.pop(k, None)
-    save("check_gate.json", data)
-    return rec
-
-
 def clear_check_gate(session: str):
     data = load("check_gate.json", {})
     if data.pop(session or "-", None) is not None:
@@ -179,13 +141,6 @@ def clear_check_gate(session: str):
 
 def _fp(text: str) -> str:
     return hashlib.sha1((text or "").rstrip().encode()).hexdigest()
-
-
-def said_ledger(session: str, turn: str) -> dict:
-    data = load("said.json", {})
-    key = "%s|%s" % (session or "-", turn or "-")
-    rec = data.get(key) or {}
-    return rec if isinstance(rec, dict) else {}
 
 
 def said_once(session: str, turn: str, kind: str, trigger: str) -> bool:
@@ -218,10 +173,6 @@ def clear_said(session: str):
             changed = True
     if changed:
         save("said.json", data)
-
-
-def refusal_chance(session: str) -> int:
-    return int((load("refusal_chance.json", {}).get(session or "-") or {}).get("n") or 0)
 
 
 def bump_refusal_chance(session: str) -> int:

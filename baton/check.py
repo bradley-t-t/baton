@@ -49,35 +49,6 @@ def find_transcript(session: str) -> str:
     return str(found[0]) if found else ""
 
 
-def check_command() -> str:
-    """Absolute command Claude should run for a draft check (wrapper if present)."""
-    root = Path(__file__).resolve().parent.parent
-    wrapper = root / "bin" / "baton-check"
-    if wrapper.exists():
-        return '"%s"' % wrapper
-    py = sys.executable or "python3"
-    return 'PYTHONPATH="%s" "%s" -m baton.cli check' % (root, py)
-
-
-def check_step_text() -> str:
-    """UserPromptSubmit additionalContext: the draft-check instruction."""
-    path = Path(__file__).resolve().parent / "check-step.md"
-    try:
-        tmpl = path.read_text()
-    except OSError:
-        tmpl = (
-            "# Check every reply with baton first\n\n"
-            "- Before every reply, write the draft to a scratch file and run `{check} <file>` "
-            "with the Bash timeout set to 600000. Run this before Tether's check.\n"
-            "- If it prints `baton: clear. Send this draft word for word.`, continue "
-            "to Tether's check on that same draft as already instructed.\n"
-            "- If it prints `baton: do NOT send your draft`, send ONLY the text it "
-            "gives, word for word. Do not run Tether's check on the refused draft.\n"
-            "- Write no user-visible text before that final reply.\n"
-        )
-    return tmpl.replace("{check}", check_command()).strip()
-
-
 def check(path: str, session: str = "", cwd: str = "", transcript: str = "",
           cfg: dict = None) -> int:
     """Judge a draft file. Exit 0 on clear or successful handoff replacement; 1 on failure."""

@@ -20,13 +20,9 @@ from .handoff import (
     complete,
     matches_expectation,
     reason,
-    relay_instruction,
     run,
 )
-from .refusal import REFUSAL_CHANCE
 from .state import (
-    bump_expectation_retry,
-    bump_refusal_chance,
     clear_check_gate,
     clear_displayed,
     clear_expectation,
@@ -40,9 +36,6 @@ from .state import (
     mark_displayed,
     mark_seen,
     remember_request,
-    refusal_chance,
-    said_once,
-    set_expectation,
 )
 from .transcript import last_reply, load as load_transcript, person_messages
 
@@ -85,11 +78,6 @@ def _reply_from(data: dict, entries) -> str:
     if not reply:
         reply = (data.get("last_assistant_message") or data.get("message") or "").strip()
     return reply or ""
-
-
-def _turn_key(session: str, user: str) -> str:
-    import hashlib
-    return hashlib.sha1(((session or "") + "\0" + (user or "")).encode()).hexdigest()[:16]
 
 
 def _check_expectation(session: str, reply: str):
@@ -144,19 +132,6 @@ def _handoff_now(reply, entries, user, cwd, session, cfg):
     log("stop handed off + displayed session=%s chars=%d" % (session[:8], len(result)))
     # No exact-relay block — the display hook shows the result.
     return None
-
-
-def _first_chance(session: str, user: str, reply: str):
-    """One Stop block telling Claude to do the work; said once per request."""
-    turn = _turn_key(session, user)
-    n = refusal_chance(session)
-    if n >= 1:
-        return None
-    bump_refusal_chance(session)
-    if not said_once(session, turn, "refusal-chance", REFUSAL_CHANCE):
-        return None
-    log("stop refusal-chance session=%s" % session[:8])
-    return {"decision": "block", "reason": REFUSAL_CHANCE}
 
 
 def on_stop():
