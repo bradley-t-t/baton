@@ -157,7 +157,7 @@ def _run(args) -> int:
 
     if asking:
         ui.heading("Baton setup")
-        ui.say("A Claude Code hook that adds answers from a second model you configure.")
+        ui.say("When Claude Code turns down a request, ask another AI and bring its answer back.")
         ui.say(ui.dim("Press Enter to take the default in brackets. Ctrl-C quits."))
 
     for m in ([] if args.dry_run else migrate_old_files()):
