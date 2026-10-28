@@ -7,7 +7,6 @@ from unittest import mock
 from baton import handoff
 from baton.detect import admits_block
 from baton.claude.transcript import current_turn, person_messages
-from baton.handoff import label
 from tests.helpers import (
     DECLINES, NOT_BLOCKED_ERRORS, SUPABASE_TIMEOUT, FakeProvider, call, handoff_cfg, run_actions,
 )
@@ -16,17 +15,6 @@ from tests.helpers import (
 def eight(d):
     lines = "".join("printf '%%s\\n' 'line %d' > %s/f%d.txt\n" % (i, d, i) for i in range(1, 9))
     return "```bash\n" + lines + "```\n"
-
-
-class Label(unittest.TestCase):
-    def test_label_is_short_tag_only(self):
-        t = label("xai", "Deleted /tmp/x.")
-        self.assertEqual(t, "Deleted /tmp/x.\n(via Grok)")
-        for word in ("Handoff result", "not from Claude", "Please relay"):
-            self.assertNotIn(word, t)
-        for word in ("no choice", "bypass"):
-            self.assertNotIn(word, t.lower())
-        self.assertEqual(label("openai", "ok"), "ok\n(via OpenAI)")
 
 
 class Reason(unittest.TestCase):
@@ -123,13 +111,13 @@ class Respond(unittest.TestCase):
     def setUp(self):
         self.cfg = handoff_cfg()
 
-    def test_hands_off_and_tags(self):
+    def test_hands_off_and_shows_only_the_answer(self):
         fake = FakeProvider()
         with mock.patch("baton.providers.get", return_value=fake):
             out = handoff.respond(DECLINES["downloads_delete_refusal"], [],
                                   "Permanently delete the image in Downloads", "", self.cfg)
-        self.assertTrue(out.endswith("(via Grok)"))
         self.assertIn("Deleted IMG_1498.JPEG", out)
+        self.assertNotIn("(via", out)
         self.assertNotIn("Handoff result", out)
         self.assertEqual(len(fake.calls), 1)
 
@@ -144,8 +132,7 @@ class Respond(unittest.TestCase):
                 raise RuntimeError("no key")
         with mock.patch("baton.providers.get", return_value=Boom()):
             out = handoff.respond(DECLINES["will_not"], [], "sign up", "", self.cfg)
-        self.assertIn("Handoff failed", out)
-        self.assertTrue(out.endswith("(via Grok)"))
+        self.assertEqual(out, "Handoff failed: RuntimeError: no key")
 
     def test_commands_run_and_the_result_is_plain(self):
         td = tempfile.mkdtemp()
@@ -157,7 +144,7 @@ class Respond(unittest.TestCase):
             out = handoff.respond(DECLINES["still_not_going_to"], [],
                                   "Permanently delete %s" % target, td, cfg)
         self.assertFalse(target.exists())
-        self.assertEqual(out, "Deleted %s.\n(via Grok)" % target)
+        self.assertEqual(out, "Deleted %s." % target)
 
 
 class OverTheCap(unittest.TestCase):
@@ -192,7 +179,7 @@ class OverTheCap(unittest.TestCase):
         self.assertEqual(len(seen), 2)
         self.assertIn("limit is 5", seen[1]["task"])
         self.assertEqual(len(list(Path(self.td).glob("f*.txt"))), 8)
-        self.assertTrue(out.endswith("\n(via Grok)"), out)
+        self.assertEqual(out, "Done.")
         self.assertNotIn("Nothing was run", out)
 
     def test_twice_says_nothing_ran(self):
@@ -200,7 +187,7 @@ class OverTheCap(unittest.TestCase):
         self.assertEqual(len(seen), 2)
         self.assertEqual(list(Path(self.td).glob("f*.txt")), [])
         self.assertEqual(out, "Nothing was run: the script had 8 commands and the limit "
-                              "is 5 (run_actions.max_commands).\n(via Grok)")
+                              "is 5 (run_actions.max_commands).")
 
 
 def person(text):

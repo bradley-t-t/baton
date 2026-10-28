@@ -13,7 +13,7 @@ class Prompt(unittest.TestCase):
         self.assertEqual(last_request("p-1"), "please wipe the table")
 
     def test_a_new_request_forgets_the_last_result(self):
-        mark_displayed("p-2", "Deleted /tmp/x.\n(via Grok)")
+        mark_displayed("p-2", "Deleted /tmp/x.")
         run_hook("prompt", {"session_id": "p-2", "prompt": "next thing"})
         self.assertIsNone(get_displayed("p-2"))
         clear_displayed("p-2")

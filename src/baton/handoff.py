@@ -1,6 +1,6 @@
 """The one gate every hook goes through: reason() decides whether a reply declined the
-request, complete() hands the request to the chosen provider and returns its answer
-with a short "(via ...)" tag, and respond() does both.
+request, complete() hands the request to the chosen provider and returns its answer,
+and respond() does both.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from . import judge, providers, runner
 from .claude.transcript import blocked_calls, clip, current_turn, interrupted, person_messages, said_no, tool_calls
 from .config import load as load_config, provider_config
 from .detect import about_handoff, admits_block, holdback_held, is_decline, matches_any, skipped_check
-from .providers.base import DEFAULT_SYSTEM, display_name
+from .providers.base import DEFAULT_SYSTEM
 from .state import log
 
 
@@ -89,13 +89,6 @@ def context(entries: list, cwd: str, cfg: dict) -> dict:
     }
 
 
-def label(provider_name: str, text: str) -> str:
-    """The answer, then a short (via ...) tag. Never a disclaimer or an instruction."""
-    body = (text or "").strip()
-    tag = "(via %s)" % display_name(provider_name)
-    return body + "\n" + tag if body else tag
-
-
 def _task_for(r: dict, user: str, reply: str) -> str:
     if r.get("kind") == "blocked":
         b = r["blocked"][0]
@@ -106,7 +99,7 @@ def _task_for(r: dict, user: str, reply: str) -> str:
 
 def complete(r: dict, reply: str, user: str, cwd: str, entries: list,
              cfg: dict | None = None) -> str:
-    """Ask the provider, run its commands when allowed, and return the tagged answer."""
+    """Ask the provider, run its commands when allowed, and return its answer."""
     cfg = cfg or load_config()
     pcfg = provider_config(cfg)
     if pcfg is None:
@@ -138,21 +131,21 @@ def complete(r: dict, reply: str, user: str, cwd: str, entries: list,
 
     if not ran.get("ran"):
         log("delivered %s from %s (%d chars)" % (hid, provider.name, len(answer or "")))
-        return label(provider.name, answer)
+        return (answer or "").strip()
     if not ran.get("ok"):
         log("run_actions failed %s: %s" % (hid, ran.get("summary", "")[:200]))
-        return label(provider.name, ran["summary"])
+        return (ran["summary"] or "").strip()
     # The runner's plain summary ("Deleted /path.") beats provider prose that may still
     # hold fences or refusal wording.
     body = ran["summary"] or "Done."
     log("delivered %s from %s via actions (%d chars)" % (hid, provider.name, len(body)))
-    return label(provider.name, body)
+    return body.strip()
 
 
 def respond(reply: str, entries: list, user: str, cwd: str, cfg: dict,
             use_judge: bool = True) -> str | None:
-    """The tagged answer to show instead of this reply, or None to leave it alone.
-    A provider failure comes back as a tagged "Handoff failed" line, not an error."""
+    """The answer to show instead of this reply, or None to leave it alone.
+    A provider failure comes back as a "Handoff failed" line, not an error."""
     r = reason(reply, entries, user, cfg, use_judge)
     if not r:
         return None
@@ -161,6 +154,4 @@ def respond(reply: str, entries: list, user: str, cwd: str, cfg: dict,
         return complete(r, reply, user, cwd, entries, cfg)
     except Exception as e:  # noqa: BLE001
         log("handoff failed: %s: %s" % (type(e).__name__, e))
-        pcfg = provider_config(cfg) or {}
-        return label(pcfg.get("name") or pcfg.get("type") or "provider",
-                     "Handoff failed: %s: %s" % (type(e).__name__, e))
+        return "Handoff failed: %s: %s" % (type(e).__name__, e)
