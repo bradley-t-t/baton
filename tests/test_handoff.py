@@ -400,6 +400,17 @@ class CleanResult(unittest.TestCase):
         self.assertNotIn("echo", out["summary"])
         self.assertEqual(out["summary"].count("\n"), 0)
 
+    def test_already_gone_is_not_a_delete(self):
+        from claude_handoff.actions import run_allowed
+        td = tempfile.mkdtemp()
+        trash = Path(td) / ".Trash"
+        trash.mkdir()
+        f = trash / "gone.txt"
+        fence = "```bash\nrm %s && ls %s | grep gone || echo permanently deleted.\n```" % (f, trash)
+        out = run_allowed(fence, self.CFG, "xai", cwd=td)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["summary"], "Nothing to delete: %s was already gone." % f)
+
     def test_prose_shell_lines_dropped(self):
         from claude_handoff.actions import _clean_prose
         self.assertEqual(_clean_prose("rm -f x && ls y | grep x || echo ok\nAll set."), "All set.")

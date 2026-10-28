@@ -269,14 +269,20 @@ def _clean_prose(prose: str) -> str:
     return "\n".join(keep)
 
 
-def summarize_success(cmds: list, results: list, prose: str = "", cwd: str = "") -> str:
+def summarize_success(cmds: list, results: list, prose: str = "", cwd: str = "",
+                      before: dict = None) -> str:
     """One plain sentence per effect, built from what ran and checked on disk.
     Never echoes command text."""
     o = outcome(cmds, cwd)
     lines = []
     if o["deleted"]:
+        before = before or {}
+        missing = [p for p in o["deleted"] if before.get(p) is False]
         still = _verify_gone(o["deleted"])
-        gone = [p for p in o["deleted"] if p not in still]
+        gone = [p for p in o["deleted"] if p not in still and p not in missing]
+        if missing:
+            lines.append("Nothing to delete: %s %s already gone." % (
+                ", ".join(_nice(p) for p in missing), "was" if len(missing) == 1 else "were"))
         trash = [p for p in gone if _in_trash(p)]
         plain = [p for p in gone if not _in_trash(p)]
         if plain:
@@ -365,6 +371,10 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
     if not os.path.isdir(workdir):
         workdir = os.getcwd()
 
+    # Which delete targets exist now, so the result never claims a delete
+    # of something that was already gone.
+    before = {q: os.path.lexists(q) for q in outcome(allowed_cmds, workdir)["deleted"]
+              if not GLOB.search(q) and "$" not in q}
     started = time.monotonic()
     path = None
     try:
@@ -390,8 +400,10 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
             return {"ran": True, "ok": False, "commands": allowed_cmds,
                     "results": [rec], "summary": summary, "log": log_blob}
         prose = strip_fences(text)
-        summary = summarize_success(allowed_cmds, [rec], prose=prose, cwd=workdir)
+        summary = summarize_success(allowed_cmds, [rec], prose=prose, cwd=workdir, before=before)
         still = _verify_gone(outcome(allowed_cmds, workdir)["deleted"])
+        if any(v is False for v in before.values()):
+            still = still or [None]
         return {"ran": True, "ok": not still, "commands": allowed_cmds, "results": [rec],
                 "summary": summary, "log": log_blob}
     except subprocess.TimeoutExpired:
