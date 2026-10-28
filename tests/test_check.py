@@ -112,6 +112,16 @@ class PromptRemembersOnly(unittest.TestCase):
 
 
 class DisplayHides(unittest.TestCase):
+    def test_status_line_skips_judge(self):
+        from unittest import mock
+        from claude_handoff import display
+        with mock.patch("claude_handoff.judge.judge_decline") as jd:
+            out = display._handoff_result(
+                "status-1", "Looking at the file before deleting it.",
+                {"session_id": "status-1"}, {"judge": {"enabled": True}})
+        self.assertIsNone(out)
+        jd.assert_not_called()
+
     def setUp(self):
         self.cfg = {
             "enabled": True, "provider": "xai",

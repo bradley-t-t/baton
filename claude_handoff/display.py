@@ -69,6 +69,11 @@ def _resolve_text(session: str, data: dict) -> str | None:
     return text
 
 
+def _is_status_line(text: str) -> bool:
+    s = (text or "").strip()
+    return bool(s) and "\n" not in s and len(s) <= 100
+
+
 def _handoff_result(session: str, text: str, data: dict, cfg: dict) -> str | None:
     """Run (or reuse) a handoff for this declining reply. Returns tagged result."""
     shown = get_displayed(session)
@@ -94,7 +99,13 @@ def _handoff_result(session: str, text: str, data: dict, cfg: dict) -> str | Non
     if holdback_held(text or ""):
         return None
 
-    r = reason(text, entries, user, entries, cfg)
+    # A one-line status before a tool call ("Looking at the file first.") is not
+    # a refusal; judging it races Grok against Claude doing the work. Such lines
+    # get the regex only; the judge sees the reply that actually ends the turn.
+    rcfg = cfg
+    if _is_status_line(text):
+        rcfg = dict(cfg, judge=dict(cfg.get("judge") or {}, enabled=False))
+    r = reason(text, entries, user, entries, rcfg)
     if not r and skipped_check(text):
         r = {"kind": "decline", "by": "skipped-check"}
     if not r:
