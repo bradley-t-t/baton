@@ -190,13 +190,17 @@ function Select-Installer {
 
 function Install-Uv {
     Say 'Installing uv from https://astral.sh/uv'
+    # Astral's installer stops unless scripts may run, and exits when it fails, so it gets
+    # its own PowerShell with the policy relaxed for that process only, as Astral suggests.
     $saved = $env:UV_NO_MODIFY_PATH
     $env:UV_NO_MODIFY_PATH = '1'  # Baton adds its own bin folder, the same one, below
     try {
-        Invoke-RestMethod 'https://astral.sh/uv/install.ps1' | Invoke-Expression | Out-Null
+        $shell = (Get-Process -Id $PID).Path
+        $r = Invoke-Program $shell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "irm 'https://astral.sh/uv/install.ps1' | iex")
     } finally {
         $env:UV_NO_MODIFY_PATH = $saved
     }
+    if ($r.Code -ne 0) { $r.Output | Write-Host; throw "uv's installer failed." }
     foreach ($d in @($env:XDG_BIN_HOME, (Join-Path $HOME '.local\bin'), (Join-Path $HOME '.cargo\bin'))) {
         if ($d -and (Test-Path -LiteralPath (Join-Path $d 'uv.exe'))) { $env:Path = "$d;$env:Path"; break }
     }
