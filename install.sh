@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install Baton: curl -fsSL https://raw.githubusercontent.com/bradley-t-t/baton/main/install.sh | sh
+# Install Baton: curl -fsSL https://taylorurl.com/baton | sh
 #
 # Installs the baton command with pipx or uv (installing uv into your home folder if
 # neither is there), removes an old pip install of claude-handoff, adds the bin folder
