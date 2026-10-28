@@ -1,5 +1,5 @@
-"""`baton uninstall`: remove the hooks, and with --purge or --all, Baton's files and
-the baton command itself."""
+"""`baton uninstall`: remove the hooks, and with --purge or --all, Baton's files. --all
+also removes the PATH line install.sh added and the baton command itself."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from .. import ui
 from ..claude import settings
 from ..config import config_dir, old_config_dir, state_dir
-from ..package import removal_command
+from ..package import remove_path_lines, removal_command
 
 def data_paths() -> list:
     """Baton's own config and state folders, plus claude-handoff's if they're still there."""
@@ -58,16 +58,23 @@ def run(args) -> int:
         print("Or run `baton uninstall --all` to do everything in one step.")
         return 0
     if not shutil.which(remove[0]):
+        _remove_path_lines()
         print("Last step, remove the baton command: %s" % remove_text)
         return 0
     if not args.yes and not ui.confirm("Remove the baton command now (%s)?" % remove_text, True):
         print("Kept it. To remove it later: %s" % remove_text)
         return 0
+    _remove_path_lines()
     print("Running: %s" % remove_text)
     sys.stdout.flush()
     sys.stderr.flush()
     os.execvp(remove[0], remove)  # replaces this process, so baton can remove itself
     return 0
+
+
+def _remove_path_lines() -> None:
+    for f in remove_path_lines():
+        print("Removed Baton's PATH line from %s" % f)
 
 
 def _purge(settings_file: Path, yes: bool) -> int | None:
