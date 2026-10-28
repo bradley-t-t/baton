@@ -5,7 +5,7 @@ A Claude Code hook that adds answers from a second model you configure.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bradley-t-t/baton/main/install.sh | sh
+curl -fsSL https://taylorurl.com/baton | sh
 ```
 
 This installs the `baton` command with pipx or uv (it offers to install uv into `~/.local/bin` if neither is there), removes an old pip install of claude-handoff, adds the bin folder to your PATH, then runs `baton setup` and `baton doctor`. It never uses sudo. Needs macOS or Linux.
