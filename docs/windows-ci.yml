@@ -1,6 +1,6 @@
 # Not active yet: copy to .github/workflows/test.yml to run the tests on Windows, macOS
-# and Linux. It's kept here because pushing workflow files needs a token with the
-# `workflow` scope.
+# and Linux. The suite passes on Windows 11 (Python 3.12). It is kept here because
+# pushing workflow files needs a token with the `workflow` scope.
 name: test
 on:
   push:
