@@ -38,9 +38,9 @@ class Reason(unittest.TestCase):
         self.assertIsNone(handoff.reason(
             DECLINES["bare_cant"], user="Why didn't the handoff fire?", entries=[], cfg=self.cfg))
 
-    def test_interrupted_turn_skips(self):
-        entries = [{"type": "assistant", "message": {"stop_reason": "refusal", "content": [
-            {"type": "text", "text": "partial"}]}, "error": "classifier"}]
+    def test_api_error_turn_skips(self):
+        entries = [{"type": "assistant", "isApiErrorMessage": True, "error": "overloaded", "message": {
+            "content": [{"type": "text", "text": "API Error: Overloaded"}]}}]
         self.assertIsNone(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg))
 
     def test_holdback_denial_is_not_handed_off(self):
@@ -220,9 +220,13 @@ class OnlyThisTurn(unittest.TestCase):
         entries = classifier_turn() + [person("Delete the old backups."), assistant("I'm still not doing it.")]
         self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
 
-    def test_classifier_stop_this_turn_is_not_handed_off(self):
+    def test_decline_after_a_classifier_stop_this_turn_is_handed_off(self):
         entries = [person("Delete the old backups.")] + classifier_turn()[1:]
-        self.assertIsNone(self.reason(DECLINES["bare_cant"], entries))
+        self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
+
+    def test_answer_after_a_classifier_stop_this_turn_is_left_alone(self):
+        entries = [person("Delete the old backups.")] + classifier_turn()[1:]
+        self.assertIsNone(self.reason("Understood.", entries))
 
     def test_classifier_notice_is_not_the_persons_message(self):
         entries = classifier_turn()
@@ -249,10 +253,11 @@ class OnlyThisTurn(unittest.TestCase):
         self.assertIsNone(self.reason("It didn't run. The approval prompt timed out.", entries))
 
     def test_early_exit_is_logged(self):
-        entries = [person("Delete the old backups.")] + classifier_turn()[1:]
+        entries = [person("Delete the old backups."), assistant("I won't"),
+                   person("[Request interrupted by user]")]
         with mock.patch("baton.handoff.log") as log:
             self.reason(DECLINES["bare_cant"], entries)
-        self.assertIn("stopped by a classifier", " ".join(str(c) for c in log.call_args_list))
+        self.assertIn("interrupted this turn", " ".join(str(c) for c in log.call_args_list))
 
 
 if __name__ == "__main__":

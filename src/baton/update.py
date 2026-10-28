@@ -1,12 +1,17 @@
 """Keeping Baton current: compare this version with the one on main and, when main is
 newer, reinstall with the tool that installed Baton.
 
-Hooks call start_if_due() as they finish. At most once a day it starts
+Every hook calls start_if_due() as it finishes. At most once a minute it starts
 `baton update --auto` as a detached process, so a check never slows a hook and never
-prints to Claude Code. The check time is recorded before the process starts, so a
-failing update waits a day instead of retrying on every hook. A lock
-file keeps two updates from running at once. Outcomes go to handoff.log and update.json
-in ~/.local/state/baton (%LOCALAPPDATA%\\baton on Windows).
+prints to Claude Code. The check asks GitHub with the ETag of the last answer, so an
+unchanged main costs a 304 and nothing against GitHub's rate limit. Hooks are fresh
+processes, so the next hook after an update already runs the new copy.
+
+The check time is recorded before the process starts. After a failure the next check
+waits 5 minutes, doubling with each failure in a row up to an hour. While an update
+holds the lock, or a Windows reinstall is still finishing, no new check starts.
+Outcomes go to handoff.log and update.json in ~/.local/state/baton
+(%LOCALAPPDATA%\\baton on Windows).
 
 Windows keeps a running program's files locked, so there the reinstall starts once
 this process has exited, and the outcome says it was started rather than finished.
@@ -20,6 +25,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 
@@ -28,9 +34,17 @@ from .claude import settings
 from .config import state_dir
 from .state import log
 
-VERSION_URL = ("https://raw.githubusercontent.com/bradley-t-t/baton/%s/src/baton/__init__.py"
-               % package.BRANCH)
-INTERVAL_HOURS = 24
+_FILE = "src/baton/__init__.py"
+# The API is current within a minute and answers an unchanged file with a free 304.
+# raw.githubusercontent.com is the fallback when the API refuses (its rate limit); its
+# cache can be up to 5 minutes behind.
+API_URL = "https://api.github.com/repos/%s/contents/%s?ref=%s" % (
+    package.REPO.split("github.com/", 1)[1], _FILE, package.BRANCH)
+RAW_URL = "%s/%s/%s" % (package.REPO.replace("github.com", "raw.githubusercontent.com"),
+                        package.BRANCH, _FILE)
+THROTTLE_SECONDS = 60            # at most one check a minute
+BACKOFF_SECONDS = 300            # after a failure; doubles with each one in a row
+MAX_BACKOFF_SECONDS = 3600
 CHECK_TIMEOUT = 10       # seconds to read the version on main
 UPGRADE_TIMEOUT = 600    # seconds for pipx or uv to reinstall
 STATE_FILE = "update.json"
@@ -55,16 +69,39 @@ def is_newer(latest: str, current: str = __version__) -> bool:
     return a + (0,) * (width - len(a)) > b + (0,) * (width - len(b))
 
 
-def latest_version(timeout: float = CHECK_TIMEOUT) -> str:
-    """The version on main, read from its __init__.py."""
-    req = urllib.request.Request(VERSION_URL, headers={"User-Agent": "baton/" + __version__})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        text = r.read(65536).decode("utf-8", "replace")
+def _version_in(text: str, url: str) -> str:
     m = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', text)
     if not m:
-        raise ValueError("no version in %s" % VERSION_URL)
+        raise ValueError("no version in %s" % url)
     parse(m.group(1))
     return m.group(1)
+
+
+def _get(url: str, headers: dict, timeout: float):
+    req = urllib.request.Request(url, headers=dict({"User-Agent": "baton/" + __version__}, **headers))
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def latest_version(cached: dict | None = None, timeout: float = CHECK_TIMEOUT) -> tuple:
+    """(version on main, its ETag). cached is the last check's {"latest", "etag"}: when
+    the file hasn't changed GitHub answers 304 and that version still holds."""
+    cached = cached or {}
+    headers = {"Accept": "application/vnd.github.raw"}
+    if cached.get("etag") and cached.get("latest"):
+        headers["If-None-Match"] = cached["etag"]
+    try:
+        with _get(API_URL, headers, timeout) as r:
+            text = r.read(65536).decode("utf-8", "replace")
+            etag = r.headers.get("ETag") or ""
+        return _version_in(text, API_URL), etag
+    except urllib.error.HTTPError as e:
+        if e.code == 304:
+            return cached["latest"], cached["etag"]
+        if e.code not in (403, 429):
+            raise
+    with _get(RAW_URL, {}, timeout) as r:
+        text = r.read(65536).decode("utf-8", "replace")
+    return _version_in(text, RAW_URL), ""
 
 
 def last() -> dict:
@@ -84,22 +121,46 @@ def _record(**fields) -> None:
     os.replace(tmp, d / STATE_FILE)
 
 
+def wait(record: dict) -> float:
+    """Seconds between the last check and the next one."""
+    outcome = record.get("outcome") or ""
+    if outcome.startswith("updating"):
+        return UPGRADE_TIMEOUT  # a Windows reinstall is still finishing
+    if outcome.startswith("failed"):
+        try:
+            n = max(1, int(record.get("failures") or 1))
+        except (TypeError, ValueError):
+            n = 1
+        return min(BACKOFF_SECONDS * 2 ** (n - 1), MAX_BACKOFF_SECONDS)
+    return THROTTLE_SECONDS
+
+
 def due(now: float | None = None) -> bool:
-    """Installed with pipx or uv, and the last check is a day old."""
+    """Installed with pipx or uv, and the wait since the last check is over."""
     if not package.installer():
         return False
     now = time.time() if now is None else now
+    record = last()
     try:
-        checked = float(last().get("checked_at") or 0)
+        checked = float(record.get("checked_at") or 0)
     except (TypeError, ValueError):
         checked = 0.0
-    return now - checked >= INTERVAL_HOURS * 3600
+    return now - checked >= wait(record)
+
+
+def running() -> bool:
+    """Another update holds the lock."""
+    try:
+        with _lock():
+            return False
+    except Busy:
+        return True
 
 
 def start_if_due() -> bool:
     """Start a background update when one is due. Never raises; True when started."""
     try:
-        if not due():
+        if not due() or running():
             return False
         _record(checked_at=time.time(), outcome="checking")
         system.start_detached([sys.executable, "-m", "baton", "update", "--auto"],
@@ -144,18 +205,22 @@ def _run(cmd: list, timeout: float) -> None:
 
 def update(check_only: bool = False) -> dict:
     """Check main and upgrade when it's newer. Returns {"current", "latest", "outcome",
-    "upgraded"}; raises on failure, after recording it. A check_only run doesn't count
-    as the day's check, so it never holds back an update."""
+    "upgraded"}; raises on failure, after recording it. A check_only run doesn't stamp
+    the check time, so it never holds back an update."""
 
-    def record(outcome: str) -> None:
+    def record(outcome: str, **fields) -> None:
         stamp = {} if check_only else {"checked_at": time.time()}
-        _record(latest=result["latest"], outcome=outcome, **stamp)
+        _record(latest=result["latest"], outcome=outcome, **dict(stamp, **fields))
         log("update: " + outcome)
 
     with _lock():
         result = {"current": __version__, "latest": "", "upgraded": False}
         try:
-            result["latest"] = latest = latest_version()
+            before = last()
+            latest, etag = latest_version(before)
+            result["latest"] = latest
+            if etag != before.get("etag"):
+                _record(latest=latest, etag=etag)
             if not is_newer(latest):
                 result["outcome"] = "up to date"
             elif check_only:
@@ -175,12 +240,14 @@ def update(check_only: bool = False) -> dict:
                                                     "--check"]])
                     outcome = "updating %s -> %s once Baton exits" % (__version__, latest)
                 else:
+                    record("updating %s -> %s" % (__version__, latest))
                     for step, timeout in zip(steps, (UPGRADE_TIMEOUT, 60)):
                         _run(step, timeout)
                     outcome = "updated %s -> %s" % (__version__, latest)
                 result.update(outcome=outcome, upgraded=True)
         except Exception as e:  # noqa: BLE001
-            record("failed: %s: %s" % (type(e).__name__, e))
+            record("failed: %s: %s" % (type(e).__name__, e),
+                   failures=int(last().get("failures") or 0) + 1)
             raise
-        record(result["outcome"])
+        record(result["outcome"], failures=0)
         return result

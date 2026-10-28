@@ -1,7 +1,7 @@
 """`baton update`: check main for a newer Baton and install it now.
 
-`--check` only reports. `--auto` is the background run hooks start once an update is
-due (see baton.update); it prints nothing.
+`--check` only reports. `--auto` is the background check hooks start, at most once a
+minute (see baton.update); it prints nothing.
 """
 
 from __future__ import annotations
@@ -35,10 +35,9 @@ def run(args) -> int:
     current, latest = result["current"], result["latest"]
     if result["upgraded"] and system.windows():
         print(ui.green("Updating") + " Baton %s -> %s. It finishes a few seconds after this "
-              "command exits; then start a new Claude Code session." % (current, latest))
+              "command exits, and the next prompt uses it." % (current, latest))
     elif result["upgraded"]:
-        print(ui.green("Updated") + " Baton %s -> %s. Start a new Claude Code session to use it."
-              % (current, latest))
+        print(ui.green("Updated") + " Baton %s -> %s. The next prompt uses it." % (current, latest))
     elif update.is_newer(latest, current):
         print("Baton %s is available (this is %s). Run `baton update` to install it."
               % (latest, current))
