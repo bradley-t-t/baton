@@ -12,36 +12,7 @@ from pathlib import Path
 from .. import ui
 from ..claude import settings
 from ..config import config_dir, old_config_dir, state_dir
-
-PACKAGE_NAMES = ("claude-baton", "baton", "claude-handoff")
-
-
-def removal_command() -> list:
-    """The command that removes the installed baton package, for how it was installed."""
-    prefix = Path(sys.prefix)
-    if (prefix / "pipx_metadata.json").exists():
-        return ["pipx", "uninstall", prefix.name]
-    if (prefix / "uv-receipt.toml").exists():
-        return ["uv", "tool", "uninstall", prefix.name]
-    name = _installed_name()
-    if name:
-        return [sys.executable, "-m", "pip", "uninstall", "-y", name]
-    return []
-
-
-def _installed_name() -> str:
-    """This project's distribution name in the running Python. PyPI has an unrelated
-    "baton", so a name only counts when its command runs our code."""
-    from importlib import metadata
-    for name in PACKAGE_NAMES:
-        try:
-            eps = metadata.distribution(name).entry_points
-        except Exception:  # noqa: BLE001
-            continue
-        if any(ep.value.startswith(("baton.", "claude_handoff.")) for ep in eps):
-            return name
-    return ""
-
+from ..package import removal_command
 
 def data_paths() -> list:
     """Baton's own config and state folders, plus claude-handoff's if they're still there."""

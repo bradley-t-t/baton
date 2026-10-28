@@ -46,7 +46,7 @@ baton doctor
 
 `setup` asks for a provider, its server URL (local only) and its API key, tests the connection, and adds Baton's hooks to `~/.claude/settings.json`. Everything else comes from the config file below. Start a new Claude Code session afterward.
 
-By default the provider's newest flagship model is used and its commands run with full permissions. Change either in the config file, or with `--model` and `--commands`. Re-running `setup` keeps your edits; `--reset` puts the model and commands back to the defaults.
+By default the provider's newest flagship model is used and its commands run with full permissions. Change either in the config file, or with `--model` and `--commands`. Re-running `setup` keeps your edits; `--reset` puts the model, commands and auto-update back to the defaults.
 
 Without prompts:
 
@@ -62,12 +62,16 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 | `--api-key-env VAR` | Read the key from `VAR` (default: the provider's usual variable) |
 | `--commands` | `on` (any command, the default), `off`, `read-only` or `custom` |
 | `--allow` | Comma-separated commands for `--commands custom` |
-| `--reset` | Model and commands back to the defaults |
+| `--reset` | Model, commands and auto-update back to the defaults |
 | `--no-test` | Skip the connection test |
 | `--dry-run` | Show what would change and stop |
 | `--yes` | Don't ask for confirmation |
 
 `baton doctor --online` also sends a test prompt.
+
+## Updates
+
+Baton updates itself. About once a day a hook starts a background check of the version on `main`, and if it's newer, reinstalls with pipx or uv, whichever installed it. Hooks never wait on it. `baton update` does it now, `baton update --check` only looks, and `baton doctor` shows the last check. Turn it off with `auto_update.enabled`.
 
 ## Config
 
@@ -86,10 +90,11 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 | `run_actions.read_only` | | Set by `--commands read-only`; also refuses writing to files with `>` |
 | `run_actions.max_commands`, `run_actions.timeout_seconds` | `20`, `60` | Most commands in one block; how long a block may run |
 | `install.remove_old` | `true` | `install.sh` removes an old pip install of claude-handoff |
+| `auto_update.enabled`, `auto_update.interval_hours` | `true`, `24` | Update Baton in the background; how often to check |
 | `never_handoff_patterns` | `[]` | Regexes; a request or reply that matches is never sent |
 | `context.user_messages`, `context.tool_calls` | `4`, `10` | How much recent context is sent with a request |
 
-Environment overrides: `BATON=0` (off), `BATON_PROVIDER`, `BATON_MODEL`, `BATON_TIMEOUT`, `BATON_JUDGE=0`, `BATON_RUN_ACTIONS=0|1`, `BATON_CONFIG`, `BATON_STATE`.
+Environment overrides: `BATON=0` (off), `BATON_PROVIDER`, `BATON_MODEL`, `BATON_TIMEOUT`, `BATON_JUDGE=0`, `BATON_RUN_ACTIONS=0|1`, `BATON_AUTO_UPDATE=0|1`, `BATON_CONFIG`, `BATON_STATE`.
 
 The `queue` entry in the example config is a different sort of provider. `github_issue` files the task as an issue in a repo you name and waits for a comment starting with `## Handback`, for when a person or another bot answers instead of a model. `setup` doesn't offer it, so set it in the config by hand.
 

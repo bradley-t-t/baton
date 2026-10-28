@@ -61,5 +61,9 @@
   },
   "install": {
     "remove_old": true
+  },
+  "auto_update": {
+    "enabled": true,
+    "interval_hours": 24
   }
 }
