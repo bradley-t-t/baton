@@ -1,38 +1,20 @@
 # claude-handoff
 
-When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) turns down a request, claude-handoff sends it to another AI you pick (Grok, OpenAI, a local model and so on) and has Claude pass the answer along instead of the refusal.
+When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) turns down a request, claude-handoff sends it to another AI you pick (Grok, OpenAI, a local model and so on) and shows that answer where the refusal would have been. It ends with a tag like `(via Grok)` so you know where it came from.
 
-The answer ends with a tag like `(via Grok)`, so you know where it came from.
+## How a refusal becomes an answer
 
-<details>
-<summary>What it does</summary>
+Three hooks: `UserPromptSubmit`, `MessageDisplay` and `Stop`. The first just remembers what you asked. It injects nothing into Claude's context.
 
-- Spots refusals with a word scan, plus an optional model check for the ones the scan misses
-- Sends your request and a bit of recent context to the provider you picked
-- Has Claude pass the answer along as is, and never hands off the same reply twice
-- Skips replies that failed for a technical reason, replies that got cut off, approvals you said no to, and Holdback blocks
+`MessageDisplay` sees each reply before it's drawn. A first-person refusal regex runs on it, and an optional judge model catches the refusals the regex misses. The judge is `"auto"` by default, so it's on only when it has a key or the endpoint is local. It runs with `CLAUDE_HANDOFF_JUDGE_ACTIVE` set, which turns the handoff off inside it and stops it from recursing. A one-line status before a tool call ("Looking at the file first.") only gets the regex.
 
-Needs Python 3.9 or later. Standard library only.
+On a refusal, the request goes to your provider with a little context: the last 4 user messages and the last 10 tool calls, each clipped. The hook then swaps the refusal on screen for the answer plus `(via Grok)`, and blanks anything Claude says after it in that turn. That only changes what's drawn. The transcript keeps the original. The hook gets a 120-second timeout so a slow provider and its commands can finish.
 
-</details>
+`Stop` is the backstop. It never blocks, so you don't get "Hook re-prompted Claude" rows. If the display hook missed a refusal, Stop hands it off and the next display draws the result.
 
-<details>
-<summary>How it works</summary>
+Some replies are never handed off: questions about claude-handoff itself, interrupted replies, approvals you said no to, Holdback blocks, and replies that failed for a technical reason. Each handed-off reply is remembered (last 500), so the same one never goes twice.
 
-Two Claude Code hooks, a draft check and a small state directory. One gate in `handoff.py` does the work: `reason()` decides if a reply is a decline, `complete()` gets the answer.
-
-1. **Record.** `UserPromptSubmit` saves the request and adds the draft-check step (below) as `additionalContext`.
-2. **Detect.** The draft check runs on Claude's draft before it's sent. `Stop` is the backstop: it reads the final reply from the transcript and skips anything the check already cleared. A first-person refusal regex runs first. The optional judge asks a model yes or no for refusals the regex misses. It's `"auto"` by default, meaning on only when it has a key or the endpoint is local. The judge runs with `CLAUDE_HANDOFF_JUDGE_ACTIVE` set, which turns the handoff off inside it, so it can't recurse.
-3. **Filter.** Questions about the tool itself, interrupted replies, approvals you said no to and Holdback blocks are skipped. A reply that failed for a technical reason isn't a decline.
-4. **Hand off.** The request goes to the provider with a capped amount of context: the last 4 user messages and the last 10 tool calls, each clipped.
-5. **Deliver.** The MessageDisplay hook replaces Claude's refusal on screen with the result and `(via Grok)`, and blanks any later text in that turn. The Stop hook never blocks, so the turn shows no "Hook re-prompted Claude" rows.
-
-Two things stop loops. Each `(session, reply)` key goes into a seen set (last 500). And a `stop_hook_active` Stop with nothing pending does nothing.
-
-</details>
-
-<details>
-<summary>Install</summary>
+## Install
 
 ```bash
 git clone https://github.com/bradley-t-t/claude-handoff.git
@@ -41,19 +23,12 @@ python3 -m pip install -e .
 claude-handoff install
 ```
 
-`install` backs up `~/.claude/settings.json`, adds the two hooks, and creates `~/.config/claude-handoff/config.json` from `config.example.json` if you don't have one.
+`install` backs up `~/.claude/settings.json`, adds the three hooks, and creates `~/.config/claude-handoff/config.json` from `config.example.json` if there isn't one. `claude-handoff status` shows whether they're in, and `claude-handoff uninstall` takes them out.
 
-```bash
-claude-handoff status      # are the hooks installed?
-claude-handoff uninstall   # take them out
-```
-
-</details>
+Set `"provider"` in that config. API keys go in `~/.config/claude-handoff/secrets.env` (`XAI_API_KEY=...`), which the hooks load if it's there. `claude-handoff test` sends a test request, and `--provider local` tries a different one.
 
 <details>
-<summary>Pick a provider</summary>
-
-Edit `~/.config/claude-handoff/config.json` and set `"provider"` to one of these:
+<summary>Providers</summary>
 
 | Provider | Talks to | Key |
 | :--- | :--- | :--- |
@@ -63,91 +38,34 @@ Edit `~/.config/claude-handoff/config.json` and set `"provider"` to one of these
 | `anthropic` | The Anthropic API | `ANTHROPIC_API_KEY` |
 | `queue` | Opens a GitHub issue and waits for a `## Handback` comment | `GITHUB_TOKEN` or `gh auth` |
 
-API keys go in `~/.config/claude-handoff/secrets.env` (for example `XAI_API_KEY=...`). The hooks load it if it's there.
-
-Then test it:
-
-```bash
-claude-handoff test
-claude-handoff test --provider local
-```
-
 </details>
 
 <details>
-<summary>Settings</summary>
+<summary>Letting the provider run commands</summary>
 
-| Variable | What it does |
-| :--- | :--- |
-| `CLAUDE_HANDOFF=0` | Turns it off |
-| `CLAUDE_HANDOFF_PROVIDER` | Picks a provider for this run |
-| `CLAUDE_HANDOFF_MODEL` | Overrides the model |
-| `CLAUDE_HANDOFF_TIMEOUT` | How long to wait for an answer, in seconds (default 300) |
-| `CLAUDE_HANDOFF_JUDGE=0` | Turns off the extra refusal check |
-| `CLAUDE_HANDOFF_CONFIG` | Path to the config file |
-| `CLAUDE_HANDOFF_STATE` | Where logs and state go (default `~/.local/state/claude-handoff`) |
+If you asked for a task rather than a question, the provider can answer with a fenced `bash` block. It's written to a temp script and run with `bash` in Claude's working directory, so quoting, loops and `python3 -c` work as written.
 
-</details>
-
-<details>
-<summary>Draft check (before send)</summary>
-
-Before every reply, Claude writes the draft to a scratch file and runs:
-
-```bash
-bin/claude-handoff-check <file>
-# or: python3 -m claude_handoff.cli check <file>
-```
-
-- Clear: prints `claude-handoff: clear. Send this draft word for word.` Tether's check runs next, if it's installed.
-- Decline: hands off, runs any allowed commands, and prints `do NOT send your draft` with the exact replacement ending in `(via Grok)`. The refusal never gets sent.
-- If Claude skips the check, the Stop hook still catches it.
-
-The UserPromptSubmit hook adds this step as `additionalContext`, same as Tether.
-
-</details>
-
-<details>
-<summary>Running commands</summary>
-
-If you asked for a task, not a question, the provider can answer with commands in a fenced `bash` block:
-
-````
-```bash
-rm /tmp/example.txt
-```
-````
-
-The block is written to a temp script and run with `bash` in Claude's working directory, so quoting, loops and `python3 -c` work as written. Before anything runs, each command is split with `shlex` and its first word checked against the `run_actions` allow list (one list, or one per provider). One miss rejects the whole block. You get a short result like `Deleted /tmp/example.txt. (via Grok)`.
+Every command in the block is split with `shlex` first, and its first word has to be on the `run_actions` allow list (one list, or one per provider). One miss rejects the whole block. What you see is a short result like `Deleted /tmp/example.txt. (via Grok)`.
 
 The `config.example.json` that `install` copies turns this on with a short list of everyday commands. Set `run_actions.enabled` to `false` to turn it off.
 
 </details>
 
 <details>
-<summary>Tests</summary>
+<summary>Environment variables</summary>
 
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-Everything is mocked, so no network is needed.
-
-</details>
-
-Built with Python, using only the standard library.
-
-
-<details>
-<summary>Hiding refusals on screen</summary>
-
-Claude Code's `MessageDisplay` hook can replace what is drawn without changing the transcript. On a refusal, claude-handoff runs the handoff inside that hook and sets `displayContent` to `<result>\n(via Grok)` — no Claude paste required. Later narration in the same turn is replaced with a zero-width space. MessageDisplay timeout is 120s so Grok + actions can finish. Stop allows when the result is already on screen.
+| Variable | What it does |
+| :--- | :--- |
+| `CLAUDE_HANDOFF=0` | Turns it off |
+| `CLAUDE_HANDOFF_PROVIDER` | Provider for this run |
+| `CLAUDE_HANDOFF_MODEL` | Model override |
+| `CLAUDE_HANDOFF_TIMEOUT` | Seconds to wait for an answer (default 300) |
+| `CLAUDE_HANDOFF_JUDGE=0` | Turns off the judge |
+| `CLAUDE_HANDOFF_CONFIG` | Path to the config file |
+| `CLAUDE_HANDOFF_STATE` | Logs and state (default `~/.local/state/claude-handoff`) |
 
 </details>
 
-<details>
-<summary>License</summary>
+`claude-handoff check <file>` judges a saved draft the same way. Tests are `python3 -m unittest discover -s tests -v`. Everything is mocked, so they don't touch the network.
 
-MIT. See [LICENSE](LICENSE).
-
-</details>
+Built with Python, using only the standard library. MIT licensed, see [LICENSE](LICENSE).
