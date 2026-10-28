@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claude-handoff"
+name = "baton"
 version = "0.1.0"
 description = "When Claude Code turns down a request, ask another AI and bring its answer back"
 readme = "README.md"
@@ -23,10 +23,10 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-claude-handoff = "claude_handoff.cli:main"
+baton = "baton.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["claude_handoff*"]
+include = ["baton*", "claude_handoff*"]
 
 [tool.setuptools.package-data]
-claude_handoff = ["check-step.md"]
+baton = ["check-step.md"]

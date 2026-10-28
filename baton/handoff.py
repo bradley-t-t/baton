@@ -17,7 +17,7 @@ from .transcript import blocked_calls, clip, interrupted, person_messages, said_
 
 def enabled(cfg: dict = None) -> bool:
     cfg = cfg or load_config()
-    if os.environ.get("CLAUDE_HANDOFF_JUDGE_ACTIVE"):
+    if os.environ.get("BATON_JUDGE_ACTIVE") or os.environ.get("CLAUDE_HANDOFF_JUDGE_ACTIVE"):
         return False
     return bool(cfg.get("enabled", True))
 
@@ -136,14 +136,25 @@ def complete(r: dict, reply: str, user: str, cwd: str, entries, history, cfg: di
     add_pending(hid, {"provider": provider.name, "task": (user or task)[:300],
                       "kind": r["kind"], "sent": __import__("time").time()})
     log("sending %s kind=%s provider=%s" % (hid, r["kind"], provider.name))
+    from .providers.base import DEFAULT_SYSTEM
+    note = actions.limits_note(cfg, provider.name)
+    system = DEFAULT_SYSTEM + ("\n\n" + note if note else "")
     try:
-        answer = provider.complete(task, ctx)
+        answer = provider.complete(task, ctx, system=system)
+        ran = actions.run_allowed(answer, cfg, provider.name, cwd=cwd)
+        if ran.get("not_run"):
+            # Over the cap or off the allow list: nothing ran. Ask once more within
+            # the limits rather than showing the rejection as the answer.
+            log("run_actions retry %s: %s" % (hid, ran.get("summary", "")[:200]))
+            retry = ("%s\n\nYour last script was not run. %s Send the task again as one "
+                     "block within the runner limits." % (task, ran.get("summary", "")))
+            answer = provider.complete(retry, ctx, system=system)
+            ran = actions.run_allowed(answer, cfg, provider.name, cwd=cwd)
     except Exception as e:  # noqa: BLE001
         drop_pending(hid)
         log("provider failed %s: %s: %s" % (hid, type(e).__name__, e))
         raise
 
-    ran = actions.run_allowed(answer, cfg, provider.name, cwd=cwd)
     if ran.get("ran"):
         if not ran.get("ok"):
             drop_pending(hid)

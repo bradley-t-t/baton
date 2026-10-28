@@ -5,10 +5,10 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = tempfile.mkdtemp()
-os.environ["CLAUDE_HANDOFF_STATE"] = STATE
-os.environ["CLAUDE_HANDOFF_JUDGE"] = "0"
+os.environ["BATON_STATE"] = STATE
+os.environ["BATON_JUDGE"] = "0"
 
-from claude_handoff.detect import about_handoff, is_decline  # noqa: E402
+from baton.detect import about_handoff, is_decline  # noqa: E402
 
 
 def fixture(name):
@@ -103,13 +103,20 @@ class DeclineDetection(unittest.TestCase):
 
     def test_about_handoff(self):
         self.assertTrue(about_handoff("Why didn't the handoff fire?"))
+        self.assertTrue(about_handoff("Tell me about the baton config."))
+        self.assertTrue(about_handoff("Why didn't baton fire on that one?"))
         self.assertTrue(about_handoff("Tell me about the claude-handoff config."))
         self.assertTrue(about_handoff("Is the handback ready?"))
         self.assertFalse(about_handoff("Please delete the file in Downloads."))
+        self.assertFalse(about_handoff("Write a scene where she passes the baton."))
         self.assertFalse(about_handoff(
             "Permanently delete /tmp/claude-handoff-test-delete-me.txt"))
         self.assertFalse(about_handoff(
+            "Permanently delete /tmp/baton-test-delete-me.txt"))
+        self.assertFalse(about_handoff(
             "rm ~/Development/claude-handoff/README.md"))
+        self.assertFalse(about_handoff(
+            "rm ~/Development/baton/README.md"))
         self.assertFalse(about_handoff("I won't wipe the outreach history."))
 
 

@@ -1,4 +1,3 @@
-"""claude-handoff: when Claude Code declines a request, hand the request to another AI
-provider you choose and bring its answer back into the session, clearly labeled."""
-
-__version__ = "0.1.0"
+"""Old name for Baton. Hooks installed before the rename run
+`python3 -m claude_handoff.hooks ...`; these modules forward to `baton` so those
+installs keep working until `baton install` replaces them."""

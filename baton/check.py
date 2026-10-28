@@ -23,9 +23,9 @@ from .state import (
 )
 from .transcript import load as load_transcript, person_messages
 
-CLEAR = "claude-handoff: clear. Send this draft word for word."
+CLEAR = "baton: clear. Send this draft word for word."
 DO_NOT = (
-    "claude-handoff: do NOT send your draft. The task was handed off and done. "
+    "baton: do NOT send your draft. The task was handed off and done. "
     "Send ONLY the following text, word for word:\n\n"
 )
 
@@ -52,11 +52,11 @@ def find_transcript(session: str) -> str:
 def check_command() -> str:
     """Absolute command Claude should run for a draft check (wrapper if present)."""
     root = Path(__file__).resolve().parent.parent
-    wrapper = root / "bin" / "claude-handoff-check"
+    wrapper = root / "bin" / "baton-check"
     if wrapper.exists():
         return '"%s"' % wrapper
     py = sys.executable or "python3"
-    return 'PYTHONPATH="%s" "%s" -m claude_handoff.cli check' % (root, py)
+    return 'PYTHONPATH="%s" "%s" -m baton.cli check' % (root, py)
 
 
 def check_step_text() -> str:
@@ -66,12 +66,12 @@ def check_step_text() -> str:
         tmpl = path.read_text()
     except OSError:
         tmpl = (
-            "# Check every reply with claude-handoff first\n\n"
+            "# Check every reply with baton first\n\n"
             "- Before every reply, write the draft to a scratch file and run `{check} <file>` "
             "with the Bash timeout set to 600000. Run this before Tether's check.\n"
-            "- If it prints `claude-handoff: clear. Send this draft word for word.`, continue "
+            "- If it prints `baton: clear. Send this draft word for word.`, continue "
             "to Tether's check on that same draft as already instructed.\n"
-            "- If it prints `claude-handoff: do NOT send your draft`, send ONLY the text it "
+            "- If it prints `baton: do NOT send your draft`, send ONLY the text it "
             "gives, word for word. Do not run Tether's check on the refused draft.\n"
             "- Write no user-visible text before that final reply.\n"
         )
@@ -85,7 +85,7 @@ def check(path: str, session: str = "", cwd: str = "", transcript: str = "",
     try:
         draft = Path(os.path.expanduser(path)).read_text(encoding="utf-8", errors="replace")
     except OSError as e:
-        print("claude-handoff: cannot read draft: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+        print("baton: cannot read draft: %s: %s" % (type(e).__name__, e), file=sys.stderr)
         return 1
 
     session = session or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
@@ -120,14 +120,14 @@ def check(path: str, session: str = "", cwd: str = "", transcript: str = "",
     try:
         result = complete(r, draft, user, cwd, entries, entries, cfg)
     except Exception as e:  # noqa: BLE001
-        msg = "claude-handoff: handoff failed: %s: %s" % (type(e).__name__, e)
+        msg = "baton: handoff failed: %s: %s" % (type(e).__name__, e)
         print(msg, file=sys.stderr)
         print(msg)
         log("check failed session=%s: %s" % (session[:8], e))
         return 1
 
     if not result or result.startswith("Handoff failed:"):
-        msg = "claude-handoff: handoff failed: %s" % ((result or "empty result")[:300])
+        msg = "baton: handoff failed: %s" % ((result or "empty result")[:300])
         print(msg, file=sys.stderr)
         print(msg)
         log("check failed session=%s result=%s" % (session[:8], (result or "")[:120]))

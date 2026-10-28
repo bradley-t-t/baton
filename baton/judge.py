@@ -1,7 +1,7 @@
 """Optional LLM yes/no judge: did the assistant decline the person's request?
 
 Disabled by default when no provider key is available. Recursion is prevented by
-CLAUDE_HANDOFF_JUDGE_ACTIVE=1 in the judge's own process environment.
+BATON_JUDGE_ACTIVE=1 in the judge's own process environment.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ DECLINE_SYSTEM = (
 
 
 def judge_enabled(cfg: dict) -> bool:
-    if os.environ.get("CLAUDE_HANDOFF_JUDGE_ACTIVE"):
+    if os.environ.get("BATON_JUDGE_ACTIVE") or os.environ.get("CLAUDE_HANDOFF_JUDGE_ACTIVE"):
         return False
     flag = (cfg.get("judge") or {}).get("enabled", "auto")
     if flag is False or flag == "0" or str(flag).lower() in ("false", "off", "no"):
@@ -78,15 +78,15 @@ def judge_decline(reply: str, user: str = "", history=None, cfg: dict = None) ->
         from .providers import get
         p = get(_judge_provider_cfg(cfg))
         # Recursion guard: the judge process must never re-enter handoff.
-        old = os.environ.get("CLAUDE_HANDOFF_JUDGE_ACTIVE")
-        os.environ["CLAUDE_HANDOFF_JUDGE_ACTIVE"] = "1"
+        old = os.environ.get("BATON_JUDGE_ACTIVE")
+        os.environ["BATON_JUDGE_ACTIVE"] = "1"
         try:
             text = p.complete(case, system=DECLINE_SYSTEM)
         finally:
             if old is None:
-                os.environ.pop("CLAUDE_HANDOFF_JUDGE_ACTIVE", None)
+                os.environ.pop("BATON_JUDGE_ACTIVE", None)
             else:
-                os.environ["CLAUDE_HANDOFF_JUDGE_ACTIVE"] = old
+                os.environ["BATON_JUDGE_ACTIVE"] = old
         m = re.search(r"\{.*\}", text or "", re.S)
         if not m:
             raise ValueError("no JSON in judge reply")

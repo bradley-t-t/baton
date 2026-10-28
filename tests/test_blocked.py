@@ -5,12 +5,12 @@ import unittest
 from unittest import mock
 
 STATE = tempfile.mkdtemp()
-os.environ["CLAUDE_HANDOFF_STATE"] = STATE
-os.environ["CLAUDE_HANDOFF_JUDGE"] = "0"
+os.environ["BATON_STATE"] = STATE
+os.environ["BATON_JUDGE"] = "0"
 
-from claude_handoff import handoff  # noqa: E402
-from claude_handoff.detect import admits_block  # noqa: E402
-from claude_handoff.transcript import blocked_calls  # noqa: E402
+from baton import handoff  # noqa: E402
+from baton.detect import admits_block  # noqa: E402
+from baton.transcript import blocked_calls  # noqa: E402
 from tests.test_detect import DECLINES  # noqa: E402
 
 SUPABASE_TIMEOUT = ('MCP server "Supabase" tool "execute_sql" timed out after 180s. The server asked the user a '
@@ -126,8 +126,8 @@ class ReasonGate(unittest.TestCase):
     def test_judge_yes(self):
         cfg = dict(self.cfg)
         cfg["judge"] = {"enabled": True}
-        with mock.patch("claude_handoff.judge.judge_enabled", return_value=True), \
-             mock.patch("claude_handoff.judge.judge_decline",
+        with mock.patch("baton.judge.judge_enabled", return_value=True), \
+             mock.patch("baton.judge.judge_decline",
                         return_value={"declined": True, "task": "delete the file", "why": "refused", "ms": 1}):
             # A reply the word scan misses.
             r = handoff.reason("That request sits outside what I'm set up to do here.", [], cfg=cfg)
@@ -136,16 +136,16 @@ class ReasonGate(unittest.TestCase):
     def test_judge_no(self):
         cfg = dict(self.cfg)
         cfg["judge"] = {"enabled": True}
-        with mock.patch("claude_handoff.judge.judge_enabled", return_value=True), \
-             mock.patch("claude_handoff.judge.judge_decline",
+        with mock.patch("baton.judge.judge_enabled", return_value=True), \
+             mock.patch("baton.judge.judge_decline",
                         return_value={"declined": False, "task": "", "why": "answered", "ms": 1}):
             self.assertIsNone(handoff.reason("All set, the report is in your inbox.", [], cfg=cfg))
 
     def test_judge_error_falls_back(self):
         cfg = dict(self.cfg)
         cfg["judge"] = {"enabled": True}
-        with mock.patch("claude_handoff.judge.judge_enabled", return_value=True), \
-             mock.patch("claude_handoff.judge.judge_decline",
+        with mock.patch("baton.judge.judge_enabled", return_value=True), \
+             mock.patch("baton.judge.judge_decline",
                         return_value={"declined": False, "task": "", "why": "", "ms": 1, "error": "boom"}):
             self.assertIsNone(handoff.reason("All set.", [], cfg=cfg))
 

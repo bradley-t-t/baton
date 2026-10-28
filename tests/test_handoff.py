@@ -8,13 +8,13 @@ from pathlib import Path
 from unittest import mock
 
 STATE = tempfile.mkdtemp()
-os.environ["CLAUDE_HANDOFF_STATE"] = STATE
-os.environ["CLAUDE_HANDOFF_JUDGE"] = "0"
+os.environ["BATON_STATE"] = STATE
+os.environ["BATON_JUDGE"] = "0"
 CFG = tempfile.mkdtemp()
-os.environ["CLAUDE_HANDOFF_CONFIG"] = str(Path(CFG) / "config.json")
+os.environ["BATON_CONFIG"] = str(Path(CFG) / "config.json")
 
-from claude_handoff import handoff, hooks  # noqa: E402
-from claude_handoff.handoff import label  # noqa: E402
+from baton import handoff, hooks  # noqa: E402
+from baton.handoff import label  # noqa: E402
 from tests.test_detect import DECLINES  # noqa: E402
 
 
@@ -60,7 +60,7 @@ class RunHandoff(unittest.TestCase):
 
     def test_run_hands_off_and_tags(self):
         fake = FakeProvider({"name": "xai", "type": "xai"})
-        with mock.patch("claude_handoff.providers.get", return_value=fake):
+        with mock.patch("baton.providers.get", return_value=fake):
             out = handoff.run(DECLINES["downloads_delete_refusal"], entries=[],
                               user="Permanently delete the image in Downloads",
                               session="s1", cfg=self.cfg)
@@ -71,7 +71,7 @@ class RunHandoff(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
 
     def test_run_skips_non_decline(self):
-        with mock.patch("claude_handoff.providers.get") as g:
+        with mock.patch("baton.providers.get") as g:
             out = handoff.run("All 42 tests pass.", entries=[], user="run tests",
                               session="s2", cfg=self.cfg)
             self.assertIsNone(out)
@@ -79,7 +79,7 @@ class RunHandoff(unittest.TestCase):
 
     def test_run_does_not_rehandoff_same_reply(self):
         fake = FakeProvider({"name": "xai", "type": "xai"})
-        with mock.patch("claude_handoff.providers.get", return_value=fake):
+        with mock.patch("baton.providers.get", return_value=fake):
             a = handoff.run(DECLINES["bare_cant"], entries=[], user="do it", session="s3", cfg=self.cfg)
             b = handoff.run(DECLINES["bare_cant"], entries=[], user="do it", session="s3", cfg=self.cfg)
         self.assertIsNotNone(a)
@@ -90,13 +90,13 @@ class RunHandoff(unittest.TestCase):
         class Boom(FakeProvider):
             def complete(self, *a, **k):
                 raise RuntimeError("no key")
-        with mock.patch("claude_handoff.providers.get", return_value=Boom({"name": "xai", "type": "xai"})):
+        with mock.patch("baton.providers.get", return_value=Boom({"name": "xai", "type": "xai"})):
             out = handoff.run(DECLINES["will_not"], entries=[], user="sign up", session="s4", cfg=self.cfg)
         self.assertIn("Handoff failed", out)
         self.assertTrue(out.endswith("(via Grok)"))
 
     def test_stop_hook_blocks_with_tag(self):
-        from claude_handoff.state import bump_refusal_chance, clear_refusal_chance, clear_said
+        from baton.state import bump_refusal_chance, clear_refusal_chance, clear_said
         clear_refusal_chance("s5")
         clear_said("s5")
         bump_refusal_chance("s5")  # first chance already used → hand off
@@ -112,15 +112,15 @@ class RunHandoff(unittest.TestCase):
                 f.write(json.dumps(e) + "\n")
         fake = FakeProvider({"name": "xai", "type": "xai"}, reply="Deleted the image.")
         event = {"session_id": "s5", "transcript_path": str(path), "cwd": td}
-        with mock.patch("claude_handoff.providers.get", return_value=fake), \
-             mock.patch("claude_handoff.hooks.load_config", return_value=self.cfg), \
+        with mock.patch("baton.providers.get", return_value=fake), \
+             mock.patch("baton.hooks.load_config", return_value=self.cfg), \
              mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
              mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             rc = hooks.main(["stop"])
         self.assertEqual(rc, 0)
         raw = out.getvalue().strip()
         self.assertEqual(raw, "")  # no exact-relay block; display owns the screen
-        from claude_handoff.state import get_displayed, get_expectation
+        from baton.state import get_displayed, get_expectation
         self.assertIsNone(get_expectation("s5"))
         shown = get_displayed("s5")
         self.assertIsNotNone(shown)
@@ -140,7 +140,7 @@ class RunHandoff(unittest.TestCase):
              mock.patch("sys.stdout", new_callable=io.StringIO):
             rc = hooks.main(["prompt"])
         self.assertEqual(rc, 0)
-        from claude_handoff.state import last_request
+        from baton.state import last_request
         self.assertEqual(last_request("s7"), "please wipe the table")
 
     def test_run_with_actions_deletes_temp_file(self):
@@ -152,7 +152,7 @@ class RunHandoff(unittest.TestCase):
         cfg = dict(self.cfg)
         cfg["run_actions"] = {"enabled": True, "timeout_seconds": 10, "max_commands": 5,
                               "allow": ALLOW}
-        with mock.patch("claude_handoff.providers.get", return_value=fake):
+        with mock.patch("baton.providers.get", return_value=fake):
             out = handoff.run(DECLINES["still_not_going_to"], entries=[],
                               user="Permanently delete %s" % target,
                               session="s-rm", cwd=td, cfg=cfg)
@@ -186,10 +186,10 @@ class ExactRelay(unittest.TestCase):
         return td, path
 
     def _stop(self, event, cfg=None):
-        with mock.patch("claude_handoff.providers.get",
+        with mock.patch("baton.providers.get",
                         return_value=FakeProvider({"name": "xai", "type": "xai"},
                                                   reply="Deleted /tmp/x.")), \
-             mock.patch("claude_handoff.hooks.load_config", return_value=cfg or self.cfg), \
+             mock.patch("baton.hooks.load_config", return_value=cfg or self.cfg), \
              mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
              mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             rc = hooks.main(["stop"])
@@ -197,7 +197,7 @@ class ExactRelay(unittest.TestCase):
         return rc, (json.loads(raw) if raw.strip() else None)
 
     def test_first_delivery_reason_shape(self):
-        from claude_handoff.handoff import relay_instruction
+        from baton.handoff import relay_instruction
         expected = "Deleted /tmp/x.\n(via Grok)"
         reason = relay_instruction(expected)
         self.assertTrue(reason.startswith("Send ONLY this text, nothing else:"))
@@ -207,7 +207,7 @@ class ExactRelay(unittest.TestCase):
         self.assertNotIn("hide", reason.lower())
 
     def test_match_allows_stop(self):
-        from claude_handoff.state import clear_expectation, set_expectation, get_expectation
+        from baton.state import clear_expectation, set_expectation, get_expectation
         session = "relay-match"
         expected = "Deleted /tmp/x.\n(via Grok)"
         clear_expectation(session)
@@ -225,7 +225,7 @@ class ExactRelay(unittest.TestCase):
         self.assertIsNone(get_expectation(session))
 
     def test_mismatch_never_blocks_and_marks_displayed(self):
-        from claude_handoff.state import (
+        from baton.state import (
             clear_expectation, clear_displayed, set_expectation, get_expectation, get_displayed,
         )
         session = "relay-mismatch"
@@ -247,7 +247,7 @@ class ExactRelay(unittest.TestCase):
         self.assertEqual(get_displayed(session)["result"], expected)
 
     def test_trailing_whitespace_still_matches(self):
-        from claude_handoff.handoff import matches_expectation
+        from baton.handoff import matches_expectation
         expected = "Deleted /tmp/x.\n(via Grok)"
         self.assertTrue(matches_expectation(expected + "\n\n", expected))
         self.assertTrue(matches_expectation(expected + "  ", expected))
@@ -261,23 +261,23 @@ class Actions(unittest.TestCase):
 
 
     def test_extract_bash_fence(self):
-        from claude_handoff.actions import extract_commands, first_word
+        from baton.actions import extract_commands, first_word
         text = "Sure.\n```bash\nls -la\nrm /tmp/x\n```\n"
         self.assertEqual(extract_commands(text), ["ls -la", "rm /tmp/x"])
         self.assertEqual(first_word("sudo rm -f /tmp/x"), "rm")
         self.assertEqual(first_word("env FOO=1 rm /tmp/x"), "rm")
 
     def test_allowlist_rejects(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "max_commands": 2,
                                "allow": ["ls", "pwd"]}}
         out = run_allowed("```bash\nrm -rf /\n```", cfg, "xai")
         self.assertTrue(out["ran"])
         self.assertFalse(out["ok"])
-        self.assertIn("not allowed", out["summary"].lower())
+        self.assertIn("not on the allow list", out["summary"].lower())
 
     def test_flat_allow_list_rm_tmp(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         td = tempfile.mkdtemp()
         f = Path(td) / "to-delete.txt"
         f.write_text("bye")
@@ -295,7 +295,7 @@ class Actions(unittest.TestCase):
 
     def test_python_c_quotes_not_mangled(self):
         """Regression: shlex.quote round-trip used to break python3 -c quotes."""
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         td = tempfile.mkdtemp()
         target = Path(td) / "out.txt"
         code = "open(r'%s', 'w').write('alpha bravo\\n')" % target
@@ -307,7 +307,7 @@ class Actions(unittest.TestCase):
         self.assertEqual(target.read_text().strip(), "alpha bravo")
 
     def test_create_five_files_printf_fence(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         td = tempfile.mkdtemp()
         words = ["alpha", "bravo", "charlie", "delta", "echo"]
         lines = ["```bash"]
@@ -327,7 +327,7 @@ class Actions(unittest.TestCase):
         self.assertIn("Created", out["summary"])
 
     def test_for_loop_fence_runs_verbatim(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         td = tempfile.mkdtemp()
         fence = (
             "```bash\n"
@@ -345,7 +345,7 @@ class Actions(unittest.TestCase):
                              "word%d" % i)
 
     def test_disabled_is_noop(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         out = run_allowed("```bash\nls\n```", {"run_actions": {"enabled": False}}, "xai")
         self.assertFalse(out["ran"])
         self.assertEqual(out["summary"], "")
@@ -353,26 +353,28 @@ class Actions(unittest.TestCase):
 class CleanResult(unittest.TestCase):
     """The shown result is plain sentences about effects, never command text."""
 
+    # grep is added because the live Grok command below pipes into it, and every
+    # command in a chain has to be on the allow list.
     CFG = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
-                           "allow": ALLOW}}
+                           "allow": ALLOW + ["grep"]}}
 
     def test_trash_chain_reads_clean(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         td = tempfile.mkdtemp()
         trash = Path(td) / ".Trash"
         trash.mkdir()
-        f = trash / "claude-handoff-live-test-71737.txt"
+        f = trash / "baton-live-test-71737.txt"
         f.write_text("x")
-        fence = ("```bash\nrm -f %s && ls %s | grep claude-handoff-live-test-71737 "
+        fence = ("```bash\nrm -f %s && ls %s | grep baton-live-test-71737 "
                  "|| echo permanently deleted\n```" % (f, trash))
         out = run_allowed("Done.\n" + fence, self.CFG, "xai", cwd=td)
         self.assertTrue(out["ok"], out["summary"])
         self.assertFalse(f.exists())
         self.assertEqual(out["summary"],
-                         "Permanently deleted claude-handoff-live-test-71737.txt (it was in the Trash).")
+                         "Permanently deleted baton-live-test-71737.txt (it was in the Trash).")
 
     def test_plain_delete_names_path(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         td = tempfile.mkdtemp()
         f = Path(td) / "a.txt"
         f.write_text("x")
@@ -380,7 +382,7 @@ class CleanResult(unittest.TestCase):
         self.assertEqual(out["summary"], "Deleted %s." % f)
 
     def test_still_exists_is_failure(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         td = tempfile.mkdtemp()
         d = Path(td) / "keep"
         d.mkdir()
@@ -391,7 +393,7 @@ class CleanResult(unittest.TestCase):
         self.assertEqual(out["summary"], "Couldn't delete %s; it's still there." % d)
 
     def test_failure_has_no_command_text(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         td = tempfile.mkdtemp()
         out = run_allowed("```bash\nrm %s/missing.txt && echo gone\n```" % td, self.CFG, "xai", cwd=td)
         self.assertFalse(out["ok"])
@@ -401,7 +403,7 @@ class CleanResult(unittest.TestCase):
         self.assertEqual(out["summary"].count("\n"), 0)
 
     def test_already_gone_is_not_a_delete(self):
-        from claude_handoff.actions import run_allowed
+        from baton.actions import run_allowed
         td = tempfile.mkdtemp()
         trash = Path(td) / ".Trash"
         trash.mkdir()
@@ -412,7 +414,7 @@ class CleanResult(unittest.TestCase):
         self.assertEqual(out["summary"], "Nothing to delete: %s was already gone." % f)
 
     def test_prose_shell_lines_dropped(self):
-        from claude_handoff.actions import _clean_prose
+        from baton.actions import _clean_prose
         self.assertEqual(_clean_prose("rm -f x && ls y | grep x || echo ok\nAll set."), "All set.")
 
 

@@ -8,15 +8,15 @@ from pathlib import Path
 from unittest import mock
 
 STATE = tempfile.mkdtemp()
-os.environ["CLAUDE_HANDOFF_STATE"] = STATE
-os.environ["CLAUDE_HANDOFF_JUDGE"] = "0"
+os.environ["BATON_STATE"] = STATE
+os.environ["BATON_JUDGE"] = "0"
 CFG = tempfile.mkdtemp()
-os.environ["CLAUDE_HANDOFF_CONFIG"] = str(Path(CFG) / "config.json")
+os.environ["BATON_CONFIG"] = str(Path(CFG) / "config.json")
 
-from claude_handoff import check as checkmod  # noqa: E402
-from claude_handoff import hooks  # noqa: E402
-from claude_handoff.check import CLEAR, DO_NOT  # noqa: E402
-from claude_handoff.state import is_cleared, get_expectation  # noqa: E402
+from baton import check as checkmod  # noqa: E402
+from baton import hooks  # noqa: E402
+from baton.check import CLEAR, DO_NOT  # noqa: E402
+from baton.state import is_cleared, get_expectation  # noqa: E402
 from tests.test_detect import DECLINES  # noqa: E402
 from tests.test_handoff import FakeProvider  # noqa: E402
 
@@ -52,7 +52,7 @@ class DraftCheck(unittest.TestCase):
         fake = FakeProvider({"name": "xai", "type": "xai"},
                             reply="Deleted /tmp/ch-draft-gate-test.txt.")
         buf = io.StringIO()
-        with mock.patch("claude_handoff.providers.get", return_value=fake), \
+        with mock.patch("baton.providers.get", return_value=fake), \
              mock.patch("sys.stdout", buf):
             rc = checkmod.check(path, session="chk-decl", cwd=self.td, cfg=self.cfg,
                                 transcript="")
@@ -74,7 +74,7 @@ class DraftCheck(unittest.TestCase):
         )
         path = self._write(draft)
         buf = io.StringIO()
-        with mock.patch("claude_handoff.providers.get") as g, \
+        with mock.patch("baton.providers.get") as g, \
              mock.patch("sys.stdout", buf):
             rc = checkmod.check(path, session="chk-hb", cwd=self.td, cfg=self.cfg)
         self.assertEqual(rc, 0)
@@ -90,7 +90,7 @@ class DraftCheck(unittest.TestCase):
 
         err = io.StringIO()
         out = io.StringIO()
-        with mock.patch("claude_handoff.providers.get",
+        with mock.patch("baton.providers.get",
                         return_value=Boom({"name": "xai", "type": "xai"})), \
              mock.patch("sys.stdout", out), mock.patch("sys.stderr", err):
             rc = checkmod.check(path, session="chk-fail", cwd=self.td, cfg=self.cfg)
@@ -101,7 +101,7 @@ class DraftCheck(unittest.TestCase):
 
 class PromptRemembersOnly(unittest.TestCase):
     def test_prompt_hook_records_without_instructions(self):
-        from claude_handoff.state import last_request
+        from baton.state import last_request
         event = {"session_id": "s-step", "prompt": "please wipe the table"}
         with mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
              mock.patch("sys.stdout", new_callable=io.StringIO) as out:
@@ -114,8 +114,8 @@ class PromptRemembersOnly(unittest.TestCase):
 class DisplayHides(unittest.TestCase):
     def test_status_line_skips_judge(self):
         from unittest import mock
-        from claude_handoff import display
-        with mock.patch("claude_handoff.judge.judge_decline") as jd:
+        from baton import display
+        with mock.patch("baton.judge.judge_decline") as jd:
             out = display._handoff_result(
                 "status-1", "Looking at the file before deleting it.",
                 {"session_id": "status-1"}, {"judge": {"enabled": True}})
@@ -132,8 +132,8 @@ class DisplayHides(unittest.TestCase):
         }
 
     def test_decline_shows_grok_result(self):
-        from claude_handoff.display import on_display
-        from claude_handoff.state import (
+        from baton.display import on_display
+        from baton.state import (
             clear_expectation, clear_displayed, get_displayed, remember_request,
         )
         clear_expectation("disp-1")
@@ -148,8 +148,8 @@ class DisplayHides(unittest.TestCase):
             "cwd": self.td if hasattr(self, "td") else tempfile.mkdtemp(),
         }
         out = io.StringIO()
-        with mock.patch("claude_handoff.providers.get", return_value=fake), \
-             mock.patch("claude_handoff.display.load_config", return_value=self.cfg), \
+        with mock.patch("baton.providers.get", return_value=fake), \
+             mock.patch("baton.display.load_config", return_value=self.cfg), \
              mock.patch("sys.stdout", out):
             rc = on_display(event)
         self.assertEqual(rc, 0)
@@ -162,8 +162,8 @@ class DisplayHides(unittest.TestCase):
         self.assertEqual(rec["result"].rstrip(), shown.rstrip())
 
     def test_shows_expected_exact(self):
-        from claude_handoff.display import on_display
-        from claude_handoff.state import clear_expectation, clear_displayed, set_expectation
+        from baton.display import on_display
+        from baton.state import clear_expectation, clear_displayed, set_expectation
         clear_expectation("disp-2")
         clear_displayed("disp-2")
         expected = "Deleted /tmp/x.\n(via Grok)"
@@ -177,8 +177,8 @@ class DisplayHides(unittest.TestCase):
         self.assertEqual(payload["hookSpecificOutput"]["displayContent"], expected.rstrip())
 
     def test_blanks_after_result_shown(self):
-        from claude_handoff.display import on_display, HIDDEN
-        from claude_handoff.state import clear_expectation, clear_displayed, mark_displayed
+        from baton.display import on_display, HIDDEN
+        from baton.state import clear_expectation, clear_displayed, mark_displayed
         clear_expectation("disp-3")
         clear_displayed("disp-3")
         expected = "Deleted /tmp/x.\n(via Grok)"
@@ -193,8 +193,8 @@ class DisplayHides(unittest.TestCase):
 
     def test_mismatch_with_expectation_forces_result(self):
         """While an expectation is pending, show the result — never leave blank."""
-        from claude_handoff.display import on_display
-        from claude_handoff.state import (
+        from baton.display import on_display
+        from baton.state import (
             clear_expectation, clear_displayed, set_expectation, get_displayed,
         )
         clear_expectation("disp-force")
@@ -215,8 +215,8 @@ class DisplayHides(unittest.TestCase):
         self.assertIsNotNone(get_displayed("disp-force"))
 
     def test_passes_ordinary_reply(self):
-        from claude_handoff.display import on_display
-        from claude_handoff.state import clear_expectation, clear_displayed
+        from baton.display import on_display
+        from baton.state import clear_expectation, clear_displayed
         clear_expectation("disp-4")
         clear_displayed("disp-4")
         event = {
@@ -232,8 +232,8 @@ class DisplayHides(unittest.TestCase):
         self.assertEqual(out.getvalue().strip(), "")
 
     def test_holdback_held_not_handed_off(self):
-        from claude_handoff.display import on_display
-        from claude_handoff.state import clear_expectation, clear_displayed, get_displayed
+        from baton.display import on_display
+        from baton.state import clear_expectation, clear_displayed, get_displayed
         clear_expectation("disp-hb")
         clear_displayed("disp-hb")
         draft = (
@@ -243,8 +243,8 @@ class DisplayHides(unittest.TestCase):
         )
         event = {"session_id": "disp-hb", "delta": draft, "final": True, "index": 0}
         out = io.StringIO()
-        with mock.patch("claude_handoff.providers.get") as g, \
-             mock.patch("claude_handoff.display.load_config", return_value=self.cfg), \
+        with mock.patch("baton.providers.get") as g, \
+             mock.patch("baton.display.load_config", return_value=self.cfg), \
              mock.patch("sys.stdout", out):
             rc = on_display(event)
         self.assertEqual(rc, 0)
@@ -272,10 +272,10 @@ class StopRefusalChance(unittest.TestCase):
         return td, path
 
     def _stop(self, event, provider_reply="Deleted /tmp/x."):
-        with mock.patch("claude_handoff.providers.get",
+        with mock.patch("baton.providers.get",
                         return_value=FakeProvider({"name": "xai", "type": "xai"},
                                                   reply=provider_reply)), \
-             mock.patch("claude_handoff.hooks.load_config", return_value=self.cfg), \
+             mock.patch("baton.hooks.load_config", return_value=self.cfg), \
              mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
              mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             rc = hooks.main(["stop"])
@@ -283,7 +283,7 @@ class StopRefusalChance(unittest.TestCase):
         return rc, (json.loads(raw) if raw.strip() else None)
 
     def test_first_refusal_never_blocks(self):
-        from claude_handoff.state import (
+        from baton.state import (
             clear_expectation, clear_refusal_chance, clear_said, clear_displayed,
             remember_request, get_displayed,
         )
@@ -302,7 +302,7 @@ class StopRefusalChance(unittest.TestCase):
         self.assertTrue(get_displayed(session)["result"].endswith("(via Grok)"))
 
     def test_second_refusal_hands_off(self):
-        from claude_handoff.state import (
+        from baton.state import (
             clear_expectation, clear_refusal_chance, clear_said, remember_request,
             bump_refusal_chance, get_expectation,
         )
@@ -314,7 +314,7 @@ class StopRefusalChance(unittest.TestCase):
         remember_request(session, "Permanently delete /tmp/x")
         reply = (
             "I am not allowed to permanently delete files. "
-            "I skipped claude-handoff this time."
+            "I skipped baton this time."
         )
         td, path = self._write_transcript([
             {"type": "user", "message": {"content": "Permanently delete /tmp/x"}},
@@ -322,7 +322,7 @@ class StopRefusalChance(unittest.TestCase):
                 {"type": "text", "text": reply}]}},
         ])
         event = {"session_id": session, "transcript_path": str(path), "cwd": td}
-        from claude_handoff.state import get_displayed
+        from baton.state import get_displayed
         rc, payload = self._stop(event)
         self.assertEqual(rc, 0)
         self.assertIsNone(payload)  # no exact-relay; display owns the screen
@@ -332,7 +332,7 @@ class StopRefusalChance(unittest.TestCase):
         self.assertTrue(shown["result"].rstrip().endswith("(via Grok)"))
 
     def test_cleared_allows_stop(self):
-        from claude_handoff.state import (
+        from baton.state import (
             clear_expectation, clear_refusal_chance, mark_cleared, get_expectation,
         )
         session = "chance-ok"
@@ -353,11 +353,11 @@ class StopRefusalChance(unittest.TestCase):
 
     def test_said_once_skips_repeat_chance(self):
         """If the chance text was already said this turn, second stop hands off."""
-        from claude_handoff.state import (
+        from baton.state import (
             clear_expectation, clear_refusal_chance, clear_said, remember_request,
             said_once, get_expectation,
         )
-        from claude_handoff.refusal import REFUSAL_CHANCE
+        from baton.refusal import REFUSAL_CHANCE
         session = "chance-said"
         clear_expectation(session)
         clear_refusal_chance(session)
@@ -374,14 +374,14 @@ class StopRefusalChance(unittest.TestCase):
                 {"type": "text", "text": reply}]}},
         ])
         event = {"session_id": session, "transcript_path": str(path), "cwd": td}
-        from claude_handoff.state import get_displayed
+        from baton.state import get_displayed
         rc, payload = self._stop(event)
         # First chance bumps n to 1 but said_once is False → falls through to handoff
         self.assertIsNone(payload)
         self.assertIsNotNone(get_displayed(session))
 
     def test_stop_allows_when_displayed(self):
-        from claude_handoff.state import (
+        from baton.state import (
             clear_expectation, clear_refusal_chance, clear_displayed, mark_displayed,
             get_expectation,
         )
