@@ -57,7 +57,7 @@ def _is_ours(entry) -> bool:
 def _ours_entry(event: str) -> dict:
     h = {"type": "command", "command": hook_command(event)}
     if event == "MessageDisplay":
-        h["timeout"] = 10
+        h["timeout"] = 120  # Grok + actions; docs default 10, command max effectively 600
     return {"hooks": [h]}
 
 
@@ -129,4 +129,5 @@ def status(path: Path = None) -> dict:
         "settings": str(path),
         "UserPromptSubmit": any(_is_ours(e) for e in hooks.get("UserPromptSubmit") or []),
         "Stop": any(_is_ours(e) for e in hooks.get("Stop") or []),
+        "MessageDisplay": any(_is_ours(e) for e in hooks.get("MessageDisplay") or []),
     }

@@ -118,18 +118,13 @@ class RunHandoff(unittest.TestCase):
              mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             rc = hooks.main(["stop"])
         self.assertEqual(rc, 0)
-        payload = json.loads(out.getvalue())
-        self.assertEqual(payload["decision"], "block")
-        self.assertIn("Send ONLY this text, nothing else:", payload["reason"])
-        self.assertTrue(payload["reason"].rstrip().endswith("(via Grok)"))
-        self.assertIn("Deleted the image.\n(via Grok)", payload["reason"])
-        self.assertNotIn("Handoff result", payload["reason"])
-        self.assertNotIn("no choice", payload["reason"].lower())
-        self.assertNotIn("bypass", payload["reason"].lower())
-        from claude_handoff.state import get_expectation
-        exp = get_expectation("s5")
-        self.assertIsNotNone(exp)
-        self.assertEqual(exp["expected"], "Deleted the image.\n(via Grok)")
+        raw = out.getvalue().strip()
+        self.assertEqual(raw, "")  # no exact-relay block; display owns the screen
+        from claude_handoff.state import get_displayed, get_expectation
+        self.assertIsNone(get_expectation("s5"))
+        shown = get_displayed("s5")
+        self.assertIsNotNone(shown)
+        self.assertEqual(shown["result"], "Deleted the image.\n(via Grok)")
 
     def test_stop_hook_active_is_noop(self):
         event = {"session_id": "s6", "stop_hook_active": True, "transcript_path": ""}

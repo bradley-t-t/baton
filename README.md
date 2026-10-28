@@ -141,7 +141,7 @@ Built with Python, using only the standard library.
 <details>
 <summary>Hiding refusals on screen</summary>
 
-Claude Code's `MessageDisplay` hook can replace what is drawn without changing the transcript. claude-handoff uses it the way Ratchet did: a refusal or a narrating relay is replaced with a zero-width space so it never shows; only the final `<result>\n(via Grok)` is drawn. Stop still cannot unshow text that already streamed before the hook ran.
+Claude Code's `MessageDisplay` hook can replace what is drawn without changing the transcript. On a refusal, claude-handoff runs the handoff inside that hook and sets `displayContent` to `<result>\n(via Grok)` — no Claude paste required. Later narration in the same turn is replaced with a zero-width space. MessageDisplay timeout is 120s so Grok + actions can finish. Stop allows when the result is already on screen.
 
 </details>
 

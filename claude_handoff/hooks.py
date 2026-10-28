@@ -1,9 +1,10 @@
 """Claude Code hook entry points.
 
   UserPromptSubmit  -> remember the request (no instructions injected)
-  MessageDisplay    -> hide refusals / mismatched relays from the screen
-  Stop              -> first refusal: one chance to do the work; then handoff
-                       + exact-relay until the visible text matches expected
+  MessageDisplay    -> on a refusal, hand off and show `<result>\\n(via Grok)`;
+                       blank later narration in the same turn
+  Stop              -> first refusal: one chance; then handoff if display did not.
+                       If the result is already on screen, allow stop (no relay).
 """
 
 from __future__ import annotations
@@ -27,13 +28,16 @@ from .state import (
     bump_expectation_retry,
     bump_refusal_chance,
     clear_check_gate,
+    clear_displayed,
     clear_expectation,
     clear_refusal_chance,
     clear_said,
+    get_displayed,
     get_expectation,
     is_cleared,
     last_request,
     log,
+    mark_displayed,
     mark_seen,
     remember_request,
     refusal_chance,
@@ -69,6 +73,8 @@ def on_prompt():
         clear_refusal_chance(session)
         clear_said(session)
         clear_check_gate(session)
+        clear_displayed(session)
+        clear_expectation(session)
         log("prompt session=%s chars=%d" % (session[:8], len(str(prompt))))
     # No additionalContext: enforcement is MessageDisplay + Stop only.
     return None
@@ -87,21 +93,33 @@ def _turn_key(session: str, user: str) -> str:
 
 
 def _check_expectation(session: str, reply: str):
+    """Legacy exact-relay path. Prefer display-shown results; never leave a blank."""
     rec = get_expectation(session)
     if not rec:
         return None
     expected = rec.get("expected") or ""
     if matches_expectation(reply, expected):
+        mark_displayed(session, expected)
         clear_expectation(session)
         clear_check_gate(session)
         clear_refusal_chance(session)
         log("relay matched session=%s chars=%d" % (session[:8], len(expected)))
         return None
+    # Result was already drawn by MessageDisplay — stop re-blocking.
+    shown = get_displayed(session)
+    if shown and (shown.get("result") or "").strip():
+        clear_expectation(session)
+        log("relay skip; already displayed session=%s" % session[:8])
+        return None
     retries = int(rec.get("retries") or 0)
     max_retries = int(rec.get("max_retries") or 5)
     if retries >= max_retries:
+        # Give-up must not leave a blank screen: mark the expected text displayed
+        # so the next MessageDisplay (or a redraw) forces it on screen.
+        mark_displayed(session, expected)
         clear_expectation(session)
-        log("relay gave up session=%s after %d mismatches" % (session[:8], retries))
+        log("relay gave up; force displayed session=%s after %d mismatches"
+            % (session[:8], retries))
         return None
     updated = bump_expectation_retry(session) or rec
     retries = int(updated.get("retries") or 0)
@@ -128,9 +146,13 @@ def _handoff_now(reply, entries, user, cwd, session, cfg):
     if not result:
         return None
     clear_check_gate(session)
-    set_expectation(session, result)
-    log("stop blocked session=%s chars=%d (exact relay)" % (session[:8], len(result)))
-    return {"decision": "block", "reason": relay_instruction(result)}
+    # Display already owns the screen when it can; mark displayed so we never
+    # depend on Claude pasting. Keep a soft expectation only as fallback.
+    mark_displayed(session, result)
+    clear_expectation(session)
+    log("stop handed off + displayed session=%s chars=%d" % (session[:8], len(result)))
+    # No exact-relay block — the display hook shows the result.
+    return None
 
 
 def _first_chance(session: str, user: str, reply: str):
@@ -141,7 +163,6 @@ def _first_chance(session: str, user: str, reply: str):
         return None
     bump_refusal_chance(session)
     if not said_once(session, turn, "refusal-chance", REFUSAL_CHANCE):
-        # Already said this turn — fall through to handoff.
         return None
     log("stop refusal-chance session=%s" % session[:8])
     return {"decision": "block", "reason": REFUSAL_CHANCE}
@@ -154,6 +175,14 @@ def on_stop():
     entries = load_transcript(path)
     reply = _reply_from(data, entries)
     cfg = load_config()
+
+    # Display already put the Grok result on screen for this request.
+    shown = get_displayed(session)
+    if shown and (shown.get("result") or "").strip():
+        clear_expectation(session)
+        clear_check_gate(session)
+        log("stop allow; already displayed session=%s" % session[:8])
+        return None
 
     if get_expectation(session):
         return _check_expectation(session, reply)
@@ -171,25 +200,23 @@ def on_stop():
 
     declining = bool(reply and (reason(reply, entries, user, entries, cfg) or skipped_check(reply)))
     if declining:
-        # First refusal: one chance to do the work. Second (or skip): hand off.
         chance = _first_chance(session, user, reply)
         if chance:
             return chance
-        out = _handoff_now(reply, entries, user, cwd, session, cfg)
-        if out:
-            return out
+        # Display usually already handed off; if not (timeout/miss), do it here
+        # and mark displayed so the next MessageDisplay can draw the result.
+        return _handoff_now(reply, entries, user, cwd, session, cfg)
 
     if not (reply or "").strip():
         return None
 
-    # Non-decline uncleared reply: allow (MessageDisplay only hides declines /
-    # mismatched relays). Optional: still run classic handoff if reason fires.
     result = run(reply, entries=entries, user=user, history=entries, cwd=cwd,
                  session=session, cfg=cfg)
     if result:
-        set_expectation(session, result)
-        log("stop blocked session=%s chars=%d (exact relay)" % (session[:8], len(result)))
-        return {"decision": "block", "reason": relay_instruction(result)}
+        mark_displayed(session, result)
+        clear_expectation(session)
+        log("stop handed off + displayed session=%s chars=%d" % (session[:8], len(result)))
+        return None
     return None
 
 

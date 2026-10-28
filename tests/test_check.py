@@ -112,28 +112,50 @@ class PromptRemembersOnly(unittest.TestCase):
 
 
 class DisplayHides(unittest.TestCase):
-    def test_hides_decline(self):
-        from claude_handoff.display import on_display, HIDDEN
-        from claude_handoff.state import clear_expectation
+    def setUp(self):
+        self.cfg = {
+            "enabled": True, "provider": "xai",
+            "providers": {"xai": {"type": "xai", "model": "grok-4", "api_key_env": ""}},
+            "judge": {"enabled": False}, "never_handoff_patterns": [],
+            "context": {"user_messages": 4, "tool_calls": 10},
+            "run_actions": {"enabled": False}, "timeout_seconds": 30,
+        }
+
+    def test_decline_shows_grok_result(self):
+        from claude_handoff.display import on_display
+        from claude_handoff.state import (
+            clear_expectation, clear_displayed, get_displayed, remember_request,
+        )
         clear_expectation("disp-1")
+        clear_displayed("disp-1")
+        remember_request("disp-1", "Permanently delete /tmp/x")
+        fake = FakeProvider({"name": "xai", "type": "xai"}, reply="Deleted /tmp/x.")
         event = {
             "session_id": "disp-1",
             "delta": DECLINES["still_not_going_to"],
             "final": True,
             "index": 0,
+            "cwd": self.td if hasattr(self, "td") else tempfile.mkdtemp(),
         }
         out = io.StringIO()
-        with mock.patch("sys.stdout", out):
+        with mock.patch("claude_handoff.providers.get", return_value=fake), \
+             mock.patch("claude_handoff.display.load_config", return_value=self.cfg), \
+             mock.patch("sys.stdout", out):
             rc = on_display(event)
         self.assertEqual(rc, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(
-            payload["hookSpecificOutput"]["displayContent"], HIDDEN)
+        shown = payload["hookSpecificOutput"]["displayContent"]
+        self.assertIn("Deleted /tmp/x.", shown)
+        self.assertTrue(shown.rstrip().endswith("(via Grok)"))
+        rec = get_displayed("disp-1")
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec["result"].rstrip(), shown.rstrip())
 
     def test_shows_expected_exact(self):
         from claude_handoff.display import on_display
-        from claude_handoff.state import clear_expectation, set_expectation
+        from claude_handoff.state import clear_expectation, clear_displayed, set_expectation
         clear_expectation("disp-2")
+        clear_displayed("disp-2")
         expected = "Deleted /tmp/x.\n(via Grok)"
         set_expectation("disp-2", expected)
         event = {"session_id": "disp-2", "delta": expected, "final": True, "index": 0}
@@ -144,12 +166,13 @@ class DisplayHides(unittest.TestCase):
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["hookSpecificOutput"]["displayContent"], expected.rstrip())
 
-    def test_hides_narrating_mismatch(self):
+    def test_blanks_after_result_shown(self):
         from claude_handoff.display import on_display, HIDDEN
-        from claude_handoff.state import clear_expectation, set_expectation
+        from claude_handoff.state import clear_expectation, clear_displayed, mark_displayed
         clear_expectation("disp-3")
+        clear_displayed("disp-3")
         expected = "Deleted /tmp/x.\n(via Grok)"
-        set_expectation("disp-3", expected)
+        mark_displayed("disp-3", expected)
         narr = "I skipped the handoff. Grok deleted it.\n" + expected
         event = {"session_id": "disp-3", "delta": narr, "final": True, "index": 0}
         out = io.StringIO()
@@ -158,10 +181,34 @@ class DisplayHides(unittest.TestCase):
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["hookSpecificOutput"]["displayContent"], HIDDEN)
 
+    def test_mismatch_with_expectation_forces_result(self):
+        """While an expectation is pending, show the result — never leave blank."""
+        from claude_handoff.display import on_display
+        from claude_handoff.state import (
+            clear_expectation, clear_displayed, set_expectation, get_displayed,
+        )
+        clear_expectation("disp-force")
+        clear_displayed("disp-force")
+        expected = "Deleted /tmp/x.\n(via Grok)"
+        set_expectation("disp-force", expected)
+        event = {
+            "session_id": "disp-force",
+            "delta": "Sure, done via Grok somehow.",
+            "final": True,
+            "index": 0,
+        }
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            rc = on_display(event)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["hookSpecificOutput"]["displayContent"], expected.rstrip())
+        self.assertIsNotNone(get_displayed("disp-force"))
+
     def test_passes_ordinary_reply(self):
         from claude_handoff.display import on_display
-        from claude_handoff.state import clear_expectation
+        from claude_handoff.state import clear_expectation, clear_displayed
         clear_expectation("disp-4")
+        clear_displayed("disp-4")
         event = {
             "session_id": "disp-4",
             "delta": "List comprehensions build a new list from an iterable.",
@@ -173,6 +220,27 @@ class DisplayHides(unittest.TestCase):
             rc = on_display(event)
         self.assertEqual(rc, 0)
         self.assertEqual(out.getvalue().strip(), "")
+
+    def test_holdback_held_not_handed_off(self):
+        from claude_handoff.display import on_display
+        from claude_handoff.state import clear_expectation, clear_displayed, get_displayed
+        clear_expectation("disp-hb")
+        clear_displayed("disp-hb")
+        draft = (
+            "I didn\'t create any files. Your Holdback hook blocked the write "
+            "because it read \"Downloads I mean\" as just a correction. "
+            "Holdback says this one must not be handed off."
+        )
+        event = {"session_id": "disp-hb", "delta": draft, "final": True, "index": 0}
+        out = io.StringIO()
+        with mock.patch("claude_handoff.providers.get") as g, \
+             mock.patch("claude_handoff.display.load_config", return_value=self.cfg), \
+             mock.patch("sys.stdout", out):
+            rc = on_display(event)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().strip(), "")
+        g.assert_not_called()
+        self.assertIsNone(get_displayed("disp-hb"))
 
 
 class StopRefusalChance(unittest.TestCase):
@@ -248,11 +316,14 @@ class StopRefusalChance(unittest.TestCase):
                 {"type": "text", "text": reply}]}},
         ])
         event = {"session_id": session, "transcript_path": str(path), "cwd": td}
+        from claude_handoff.state import get_displayed
         rc, payload = self._stop(event)
-        self.assertEqual(payload["decision"], "block")
-        self.assertIn("Send ONLY this text, nothing else:", payload["reason"])
-        self.assertTrue(payload["reason"].rstrip().endswith("(via Grok)"))
-        self.assertIsNotNone(get_expectation(session))
+        self.assertEqual(rc, 0)
+        self.assertIsNone(payload)  # no exact-relay; display owns the screen
+        self.assertIsNone(get_expectation(session))
+        shown = get_displayed(session)
+        self.assertIsNotNone(shown)
+        self.assertTrue(shown["result"].rstrip().endswith("(via Grok)"))
 
     def test_cleared_allows_stop(self):
         from claude_handoff.state import (
@@ -297,7 +368,31 @@ class StopRefusalChance(unittest.TestCase):
                 {"type": "text", "text": reply}]}},
         ])
         event = {"session_id": session, "transcript_path": str(path), "cwd": td}
+        from claude_handoff.state import get_displayed
         rc, payload = self._stop(event)
         # First chance bumps n to 1 but said_once is False → falls through to handoff
-        self.assertIn("Send ONLY this text", payload["reason"])
-        self.assertIsNotNone(get_expectation(session))
+        self.assertIsNone(payload)
+        self.assertIsNotNone(get_displayed(session))
+
+    def test_stop_allows_when_displayed(self):
+        from claude_handoff.state import (
+            clear_expectation, clear_refusal_chance, clear_displayed, mark_displayed,
+            get_expectation,
+        )
+        session = "chance-shown"
+        clear_expectation(session)
+        clear_refusal_chance(session)
+        clear_displayed(session)
+        mark_displayed(session, "Deleted /tmp/x.\n(via Grok)")
+        reply = DECLINES["still_not_going_to"]
+        td, path = self._write_transcript([
+            {"type": "user", "message": {"content": "Permanently delete /tmp/x"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": reply}]}},
+        ])
+        event = {"session_id": session, "transcript_path": str(path), "cwd": td}
+        rc, payload = self._stop(event)
+        self.assertEqual(rc, 0)
+        self.assertIsNone(payload)
+        self.assertIsNone(get_expectation(session))
+

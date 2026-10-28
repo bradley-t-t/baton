@@ -261,3 +261,26 @@ def display_buffer_set(session: str, message_id: str, text: str, final: bool) ->
             data.pop(old, None)
     save("display_buf.json", data)
     return joined
+
+
+def get_displayed(session: str):
+    """Result already shown on screen for this session's current request."""
+    return load("displayed.json", {}).get(session or "-")
+
+
+def mark_displayed(session: str, result: str):
+    data = load("displayed.json", {})
+    data[session or "-"] = {
+        "result": result,
+        "at": time.time(),
+    }
+    if len(data) > 200:
+        for old in sorted(data, key=lambda k: data[k].get("at", 0))[: len(data) - 200]:
+            data.pop(old, None)
+    save("displayed.json", data)
+
+
+def clear_displayed(session: str):
+    data = load("displayed.json", {})
+    if data.pop(session or "-", None) is not None:
+        save("displayed.json", data)
