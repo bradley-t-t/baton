@@ -32,7 +32,7 @@ class Installer(unittest.TestCase):
         with mock.patch.dict("os.environ", {"HOME": str(home), "USERPROFILE": str(home),
                                             "PATH": "/nowhere"}), \
                 mock.patch("baton.package.TOOL_DIRS", ("~/.local/bin",)):
-            self.assertEqual(package.tool("uv"), str(uv))
+            self.assertEqual(os.path.normcase(package.tool("uv")), os.path.normcase(str(uv)))
             self.assertEqual(package.tool("pipx"), "")
             self.assertEqual(package.search_path(), "/nowhere" + os.pathsep + str(uv.parent))
 
