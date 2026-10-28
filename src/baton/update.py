@@ -170,7 +170,9 @@ def update(check_only: bool = False) -> dict:
                 steps = [cmd] + ([[sys.executable, "-m", "baton", "install"]]
                                  if hooks_installed() else [])
                 if system.windows():
-                    system.run_after_exit(steps)
+                    # Then a check by the new copy replaces this "updating" record.
+                    system.run_after_exit(steps + [[sys.executable, "-m", "baton", "update",
+                                                    "--check"]])
                     outcome = "updating %s -> %s once Baton exits" % (__version__, latest)
                 else:
                     for step, timeout in zip(steps, (UPGRADE_TIMEOUT, 60)):

@@ -100,6 +100,7 @@ class Updates(WindowsHome):
         steps = later.call_args[0][0]
         self.assertEqual(steps[0], upgrade)
         self.assertEqual(steps[1][1:], ["-m", "baton", "install"])
+        self.assertEqual(steps[2][1:], ["-m", "baton", "update", "--check"])
         self.assertTrue(r["upgraded"])
         self.assertIn("once Baton exits", update.last()["outcome"])
 
