@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from .. import models
 from .base import DEFAULT_SYSTEM, Provider, ProviderError, http_json
 
 
 class AnthropicProvider(Provider):
     def complete(self, task: str, context: dict = None, system: str = "") -> str:
         key = self.require_key()
-        model = self.cfg.get("model") or "claude-sonnet-4-5"
+        model = self.cfg.get("model")
+        if models.is_auto(model):
+            model, _ = models.resolve(self.cfg, key)
         content = task
         if context:
             import json

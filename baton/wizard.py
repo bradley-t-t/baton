@@ -1,7 +1,11 @@
-"""`baton setup`: pick a provider, store its key, test it, choose whether the provider's
-commands may run, show the Claude Code hook entries, and install them.
+"""`baton setup`: pick a provider, store its key, test it, and install the Claude Code
+hooks.
 
-Every prompt has a flag, so the same steps run unattended with --yes.
+It only asks for the provider, the server URL (local only) and the API key. The model,
+commands and the rest come from ~/.config/baton/config.json: the defaults on a first
+run, and whatever is in the file after that, so hand edits are kept. --model,
+--commands, --allow and --reset change them. Every prompt has a flag, so the same steps
+run unattended with --yes.
 """
 
 from __future__ import annotations
@@ -13,18 +17,19 @@ import sys
 from pathlib import Path
 
 from . import install as inst
-from . import keys, ui
+from . import keys, models, ui
+from .actions import allows_all
 from .config import config_dir, config_path, env
 
 PROVIDERS = {
-    "xai": {"label": "Grok (xAI)", "short": "Grok", "type": "xai", "model": "grok-4",
+    "xai": {"label": "Grok (xAI)", "short": "Grok", "type": "xai", "model": "auto",
             "api_key_env": "XAI_API_KEY"},
-    "openai": {"label": "OpenAI", "short": "OpenAI", "type": "openai", "model": "gpt-5",
+    "openai": {"label": "OpenAI", "short": "OpenAI", "type": "openai", "model": "auto",
                "api_key_env": "OPENAI_API_KEY"},
-    "anthropic": {"label": "Anthropic", "short": "Anthropic", "type": "anthropic", "model": "claude-sonnet-4-5",
+    "anthropic": {"label": "Anthropic", "short": "Anthropic", "type": "anthropic", "model": "auto",
                   "api_key_env": "ANTHROPIC_API_KEY"},
     "local": {"label": "Local (Ollama, LM Studio, any OpenAI-compatible server)", "short": "Local server",
-              "type": "openai_compatible", "model": "llama3.1",
+              "type": "openai_compatible", "model": "auto",
               "base_url": "http://localhost:11434/v1", "api_key_env": ""},
 }
 ALIASES = {"grok": "xai", "xai": "xai", "openai": "openai", "anthropic": "anthropic",
@@ -33,7 +38,7 @@ ORDER = ["xai", "openai", "anthropic", "local"]
 
 READ_ONLY = ["cat", "du", "echo", "false", "file", "grep", "head", "ls", "printf", "pwd",
              "stat", "tail", "test", "true", "wc"]
-COMMAND_MODES = ["off", "read-only", "custom"]
+COMMAND_MODES = ["on", "off", "read-only", "custom"]
 
 
 class SetupError(Exception):
@@ -42,7 +47,8 @@ class SetupError(Exception):
 
 def add_arguments(p):
     p.add_argument("--provider", help="grok, openai, anthropic or local")
-    p.add_argument("--model", help="Model name (defaults to the provider's usual one)")
+    p.add_argument("--model", help="Model name, or auto for the provider's newest flagship "
+                                   "(the default)")
     p.add_argument("--base-url", help="Server URL for --provider local")
     key = p.add_mutually_exclusive_group()
     key.add_argument("--api-key", help="API key to store (shows up in shell history; "
@@ -50,8 +56,10 @@ def add_arguments(p):
     key.add_argument("--api-key-env", metavar="VAR",
                      help="Read the API key from this environment variable")
     p.add_argument("--commands", choices=COMMAND_MODES,
-                   help="Whether the provider's shell commands may run (default: off)")
+                   help="on: any command (the default); off; read-only; or custom with --allow")
     p.add_argument("--allow", help="Comma-separated commands for --commands custom")
+    p.add_argument("--reset", action="store_true",
+                   help="Put the model and commands back to the defaults")
     p.add_argument("--no-test", action="store_true", help="Skip the connection test")
     p.add_argument("--settings", help="Claude Code settings file "
                                       "(default ~/.claude/settings.json)")
@@ -88,7 +96,10 @@ def commands_block(mode: str, allow=None, current: dict = None) -> dict:
     ra = copy.deepcopy(current or {})
     ra.setdefault("timeout_seconds", 60)
     ra.setdefault("max_commands", 20)
-    if mode == "off":
+    if mode == "on":
+        ra.update({"enabled": True, "allow": "all"})
+        ra.pop("read_only", None)
+    elif mode == "off":
         ra["enabled"] = False
         ra.pop("read_only", None)
     elif mode == "read-only":
@@ -108,7 +119,15 @@ def current_mode(ra: dict) -> str:
         return "off"
     if ra.get("read_only"):
         return "read-only"
+    if allows_all({"run_actions": ra}, ""):
+        return "on"
     return "custom"
+
+
+def _is_old_default(ra: dict) -> bool:
+    """The run_actions block Baton shipped before commands defaulted to on, untouched."""
+    return (not ra.get("enabled") and ra.get("allow") in (None, [])
+            and not ra.get("read_only"))
 
 
 def test_connection(pcfg: dict, key_env: str, key: str):
@@ -178,8 +197,11 @@ def _run(args) -> int:
     pcfg = copy.deepcopy((raw.get("providers") or {}).get(name) or {})
     pcfg["type"] = spec["type"]
     pcfg.setdefault("api_key_env", spec["api_key_env"])
-    pcfg["model"] = args.model or (ui.ask("Model", pcfg.get("model") or spec["model"])
-                                   if asking else pcfg.get("model") or spec["model"])
+    model_was = pcfg.get("model") or ""
+    if args.model:
+        pcfg["model"] = args.model
+    elif args.reset or not model_was or model_was in models.OLD_DEFAULTS.get(name, ()):
+        pcfg["model"] = models.AUTO
     if name == "local":
         default_url = pcfg.get("base_url") or spec["base_url"]
         pcfg["base_url"] = args.base_url or (ui.ask("Server URL", default_url)
@@ -216,13 +238,17 @@ def _run(args) -> int:
                                  " or --api-key" % (spec["label"], key_env))
 
     # Test
-    do_test = not args.no_test
-    if asking and do_test:
-        ui.heading("3. Connection test")
-        do_test = ui.confirm("Send one short test prompt to %s?" % spec["short"], True)
-    if do_test:
-        test_key = key or os.environ.get(key_env, "") or keys.read().get(key_env, "")
-        ok, msg = test_connection(dict(pcfg, name=name), key_env, test_key)
+    test_key = key or (os.environ.get(key_env, "") or keys.read().get(key_env, "")
+                       if key_env else "")
+    resolved = ""
+    if models.is_auto(pcfg.get("model")) and not args.no_test:
+        # The online step: read the provider's model list to see what "auto" picks.
+        resolved, _ = models.resolve(pcfg, test_key, refresh=True)
+    if not args.no_test:
+        if asking:
+            ui.heading("3. Connection test")
+        ok, msg = test_connection(dict(pcfg, name=name, model=resolved or pcfg["model"]),
+                                  key_env, test_key)
         if ok:
             ui.say(ui.green("ok") + "  %s answered: %s" % (spec["short"], msg))
         else:
@@ -231,28 +257,22 @@ def _run(args) -> int:
                 raise SetupError("connection test failed (use --no-test to skip it)")
 
     # Commands
+    # Commands: from the flags, else as the config file has them (the default is on,
+    # any command). Only Baton's old untouched default of "off" is moved to the new one.
     ra_now = raw.get("run_actions") or {}
+    allow = (args.allow or "").split(",") if args.allow else None
     if args.commands:
         mode = args.commands
-    elif asking:
-        ui.heading("4. Commands")
-        ui.say("The provider can reply with a shell script. Baton can run it on this "
-               "machine, in Claude's working directory, if you allow it.")
-        opts = [("Off", "never run commands"),
-                ("Read-only", ", ".join(READ_ONLY) + "; no writing to files"),
-                ("Custom", "you list the commands that may run")]
-        mode = COMMAND_MODES[ui.choose("Run the provider's commands?", opts,
-                                       COMMAND_MODES.index(current_mode(ra_now)))]
+        if mode == "custom" and allow is None and isinstance(ra_now.get("allow"), list):
+            allow = ra_now["allow"]
+        ra = commands_block(mode, allow, ra_now)
+    elif args.allow:
+        ra = commands_block("custom", allow, ra_now)
+    elif args.reset or not ra_now or _is_old_default(ra_now):
+        ra = commands_block("on", None, ra_now)
     else:
-        mode = current_mode(ra_now)  # the example config has it off
-    allow = (args.allow or "").split(",") if args.allow else None
-    if mode == "custom" and allow is None:
-        if asking:
-            start = ",".join(ra_now.get("allow") or []) if isinstance(ra_now.get("allow"), list) else ""
-            allow = ui.ask("Commands that may run, comma-separated", start).split(",")
-        elif current_mode(ra_now) == "custom" and isinstance(ra_now.get("allow"), list):
-            allow = ra_now["allow"]  # already custom: keep the list in use
-    ra = commands_block(mode, allow, ra_now)
+        ra = copy.deepcopy(ra_now)
+    mode = current_mode(ra)
 
     # Review
     cfg_file = _target_config()
@@ -263,24 +283,26 @@ def _run(args) -> int:
     new_raw["run_actions"] = ra
 
     ui.heading("Review")
-    ui.say("Provider:  %s, model %s%s" % (spec["short"], pcfg["model"],
+    shown = pcfg["model"]
+    if models.is_auto(shown) and resolved:
+        shown = "auto (%s right now)" % resolved
+    ui.say("Provider:  %s, model %s%s" % (spec["short"], shown,
                                           (" at %s" % pcfg["base_url"]) if name == "local" else ""))
-    ui.say("Commands:  %s" % {"off": "off",
-                              "read-only": "read-only (%s)" % ", ".join(ra["allow"]),
+    ui.say("Commands:  %s" % {"on": "on, any command",
+                              "off": "off",
+                              "read-only": "read-only (%s)" % ", ".join(ra.get("allow") or []),
                               "custom": "custom (%s)" % ", ".join(ra.get("allow") or [])}[mode])
     ui.say("Config:    %s" % cfg_file)
     if key:
         ui.say("API key:   %s in %s (mode 600)" % (key_env, keys.secrets_path()))
-    ui.say("Hooks to write into Claude Code settings:")
-    ui.say(ui.dim(hook_preview(settings)))
+    ui.say("Hooks:     %s" % settings)
     ui.say(ui.dim("Any older Baton or claude-handoff entries are replaced. Other hooks are kept."))
 
     if args.dry_run:
+        ui.say("Hooks that would be written:")
+        ui.say(ui.dim(hook_preview(settings)))
         ui.say("\nDry run: nothing was written.")
         return 0
-    if asking and not ui.confirm("\nWrite these and install?", True):
-        ui.say("Nothing more was changed.")
-        return 1
 
     cfg_file.parent.mkdir(parents=True, exist_ok=True)
     tmp = cfg_file.with_name(cfg_file.name + ".tmp")
@@ -291,5 +313,8 @@ def _run(args) -> int:
     path = inst.install()
     ui.say(ui.green("Done.") + " Hooks are in %s. Start a new Claude Code session to use them."
            % path)
+    if mode == "on":
+        ui.say("Commands from %s run with full permissions. To change that, edit "
+               "run_actions in %s." % (spec["short"], cfg_file))
     ui.say("Check everything with `baton doctor`.")
     return 0

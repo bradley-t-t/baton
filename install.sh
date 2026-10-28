@@ -2,8 +2,10 @@
 # Install Baton: curl -fsSL https://raw.githubusercontent.com/bradley-t-t/baton/main/install.sh | sh
 #
 # Installs the baton command with pipx or uv (installing uv into your home folder if
-# neither is there), removes an old claude-handoff install, then runs `baton setup`
-# and `baton doctor`. Nothing is installed system-wide and sudo is never used.
+# neither is there), removes an old pip install of claude-handoff, adds the bin folder
+# to PATH, then runs `baton setup` and `baton doctor`. Nothing is installed
+# system-wide and sudo is never used. Set "install": {"remove_old": false} in
+# ~/.config/baton/config.json to keep an old install.
 #
 # Arguments after `sh -s --` go to `baton setup`, for example:
 #   curl -fsSL .../install.sh | sh -s -- --provider local --yes
@@ -96,6 +98,24 @@ for name in ("claude-handoff", "baton", "claude-baton"):
         print(name)
 '
 
+# "install": {"remove_old": false} in the config keeps an old install. Default: remove.
+remove_old_wanted() {
+    cfg="${BATON_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/baton/config.json}"
+    [ -f "$cfg" ] || return 0
+    for py in $(pythons); do
+        "$py" - "$cfg" <<'PY' 2>/dev/null && return 0
+import json, sys
+try:
+    c = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+sys.exit(1 if ((c.get("install") or {}).get("remove_old", True) is False) else 0)
+PY
+        return 1
+    done
+    return 0
+}
+
 cleanup_old() {
     step "Checking for an older install"
     found=""
@@ -105,8 +125,8 @@ cleanup_old() {
         found=1
         names=$(printf '%s' "$names" | tr '\n' ' ')
         say "Found ${B}${names% }${N} installed with pip in $py"
-        if ! ask "Uninstall it? Baton is reinstalled on its own below." y; then
-            note "Kept it. Its baton command may hide the new one on your PATH."
+        if [ -z "$REMOVE_OLD" ]; then
+            note "Kept it (install.remove_old is false). Its baton command may hide the new one."
             continue
         fi
         # shellcheck disable=SC2086
@@ -203,9 +223,12 @@ check_path() {
     esac
     PATH="$BIN_DIR:$PATH"; export PATH
     step "PATH"
-    say "$BIN_DIR isn't on your PATH yet, so new shells won't find baton."
     if [ "$INSTALLER" = pipx ]; then fix="pipx ensurepath"; else fix="uv tool update-shell"; fi
     tool=$(command -v "$INSTALLER")
+    if [ -z "$TTY" ]; then
+        note "$BIN_DIR isn't on your PATH. Run \`$fix\`, or add it yourself."
+        return
+    fi
     # Both tools pick the startup file from $SHELL. Use the login shell if it's unset.
     sh_name="${SHELL:-}"
     if [ -z "$sh_name" ]; then
@@ -215,17 +238,13 @@ check_path() {
             sh_name=$(getent passwd "$(id -un)" | cut -d: -f7)
         fi
     fi
-    if [ -n "$TTY" ] && ask "Run \`$fix\` to add it to your shell startup file?" y; then
-        # With the PATH you started with, so the tool sees that the folder is missing.
-        # shellcheck disable=SC2086
-        if env PATH="$ORIG_PATH" SHELL="${sh_name:-/bin/sh}" "$tool" ${fix#* } >"$LOG" 2>&1; then
-            ok "Added. Open a new terminal to pick it up."
-        else
-            sed 's/^/    /' "$LOG"
-            note "That didn't work. Add $BIN_DIR to PATH yourself."
-        fi
+    # With the PATH you started with, so the tool sees that the folder is missing.
+    # shellcheck disable=SC2086
+    if env PATH="$ORIG_PATH" SHELL="${sh_name:-/bin/sh}" "$tool" ${fix#* } >"$LOG" 2>&1; then
+        ok "Added $BIN_DIR to PATH with \`$fix\`. Open a new terminal to pick it up."
     else
-        note "Skipped. Run \`$fix\` later, or add $BIN_DIR to PATH."
+        sed 's/^/    /' "$LOG"
+        note "Couldn't add $BIN_DIR to PATH. Add it yourself."
     fi
 }
 
@@ -250,6 +269,8 @@ main() {
     LOG=$(mktemp "${TMPDIR:-/tmp}/baton-install.XXXXXX")
     trap 'rm -f "$LOG"' EXIT INT TERM
     [ -n "$TTY" ] || note "No terminal found, so nothing will be asked and shell startup files are left alone."
+    REMOVE_OLD=1
+    remove_old_wanted || REMOVE_OLD=""
 
     cleanup_old
     choose_installer

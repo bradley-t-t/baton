@@ -121,6 +121,27 @@ def first_word(cmd: str) -> str:
     return ""
 
 
+ALL = "all"
+
+
+def _allow_value(cfg: dict, provider_name: str):
+    raw = (cfg.get("run_actions") or {}).get("allow")
+    if isinstance(raw, dict):
+        return raw.get(provider_name, raw.get("*"))
+    return raw
+
+
+def allows_all(cfg: dict, provider_name: str) -> bool:
+    """run_actions.allow is "all" (or a list holding "all" or "*"): any command may run.
+    The cap on commands per block and the timeout still apply."""
+    raw = _allow_value(cfg, provider_name)
+    if isinstance(raw, str):
+        return raw.strip().lower() in (ALL, "*")
+    if isinstance(raw, list):
+        return any(str(a).strip().lower() in (ALL, "*") for a in raw)
+    return False
+
+
 def allowlist(cfg: dict, provider_name: str) -> set:
     ra = cfg.get("run_actions") or {}
     raw = ra.get("allow")
@@ -403,9 +424,15 @@ def limits_note(cfg: dict, provider_name: str) -> str:
     that will actually run. Empty when commands are not run at all."""
     ra = cfg.get("run_actions") or {}
     allow = allowlist(cfg, provider_name)
-    if not ra.get("enabled") or not allow:
+    every = allows_all(cfg, provider_name)
+    if not ra.get("enabled") or not (allow or every):
         return ""
     extra = (" Writing to files with > or >> is not allowed." if ra.get("read_only") else "")
+    if every:
+        return ("Runner limits: the block may have at most %d commands, counting each "
+                "command in a chain, pipe or loop body. A block over the limit is not run "
+                "at all. When the same command repeats, use one for-loop instead of a line "
+                "per item.%s" % (max_commands(cfg), extra))
     return ("Runner limits: the block may have at most %d commands, counting each "
             "command in a chain, pipe or loop body, and each command has to be one of: %s. A block over "
             "the limit or with any other command is not run at all. When the same "
@@ -438,7 +465,8 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
     if not ra.get("enabled"):
         return empty
     allow = allowlist(cfg, provider_name)
-    if not allow:
+    every = allows_all(cfg, provider_name)
+    if not allow and not every:
         return empty
     timeout = int(ra.get("timeout_seconds") or 60)
     max_n = max_commands(cfg)
@@ -463,7 +491,7 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
         log("run_actions over cap: %d > %d" % (len(simple), max_n))
         return {"ran": True, "ok": False, "commands": [], "results": [],
                 "summary": msg, "log": msg, "not_run": "too_many"}
-    rejected = [c for c in simple if first_word(c) not in allow]
+    rejected = [] if every else [c for c in simple if first_word(c) not in allow]
     if rejected:
         msg = "Nothing was run: %s is not on the allow list." % first_word(rejected[0])
         log("run_actions rejected: %s" % rejected[0][:80])

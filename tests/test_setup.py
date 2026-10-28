@@ -30,10 +30,14 @@ class Home(unittest.TestCase):
             os.environ.pop(k)
         self.tty = mock.patch("baton.ui.interactive", return_value=False)
         self.tty.start()
+        # No test talks to a real provider: model lists fail unless a test says otherwise.
+        self.lists = mock.patch("baton.models.list_models", side_effect=OSError("offline"))
+        self.lists.start()
         self.cfg_file = self.home / ".config" / "baton" / "config.json"
         self.secrets = self.home / ".config" / "baton" / "secrets.env"
 
     def tearDown(self):
+        self.lists.stop()
         self.tty.stop()
         self.env.stop()
 
@@ -60,12 +64,17 @@ class SafeDefaults(Home):
                                           user="delete the file", cfg=cfg))
             g.assert_not_called()
 
-    def test_commands_are_off_by_default(self):
-        self.assertFalse(DEFAULTS["run_actions"]["enabled"])
+    def test_defaults_are_auto_model_and_all_commands(self):
         example = json.loads(inst.example_config_path().read_text())
-        self.assertFalse(example["run_actions"]["enabled"])
-        self.assertEqual(example["provider"], "")
-        self.assertEqual(example["run_actions"]["allow"], [])
+        for c in (DEFAULTS, example):
+            self.assertEqual(c["provider"], "")
+            self.assertTrue(c["run_actions"]["enabled"])
+            self.assertEqual(c["run_actions"]["allow"], "all")
+            self.assertEqual(c["run_actions"]["max_commands"], 20)
+            self.assertEqual(c["run_actions"]["timeout_seconds"], 60)
+            self.assertTrue(c["install"]["remove_old"])
+            for name in ("xai", "openai", "anthropic", "local"):
+                self.assertEqual(c["providers"][name]["model"], "auto")
 
     def test_plain_install_says_no_provider_yet(self):
         rc, out = self.cli("install")
@@ -93,8 +102,11 @@ class Setup(Home):
         self.assertNotIn("sk-test-123", out)
         cfg = json.loads(self.cfg_file.read_text())
         self.assertEqual(cfg["provider"], "xai")
-        self.assertEqual(cfg["providers"]["xai"]["model"], "grok-4")
-        self.assertFalse(cfg["run_actions"]["enabled"])
+        self.assertEqual(cfg["providers"]["xai"]["model"], "auto")
+        self.assertTrue(cfg["run_actions"]["enabled"])
+        self.assertEqual(cfg["run_actions"]["allow"], "all")
+        self.assertIn("full permissions", out)
+        self.assertIn(str(self.cfg_file), out)
         self.assertEqual(stat.S_IMODE(self.secrets.stat().st_mode), 0o600)
         self.assertEqual(keys.read()["XAI_API_KEY"], "sk-test-123")
         for event in inst.EVENTS:
@@ -145,6 +157,64 @@ class Setup(Home):
         self.assertTrue(ra["enabled"] and ra["read_only"])
         self.assertNotIn("rm", ra["allow"])
         self.assertFalse(self.secrets.exists())
+
+    def test_commands_off_and_back_on(self):
+        rc, out = self.cli("setup", "--provider", "local", "--commands", "off", "--yes", "--no-test")
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(json.loads(self.cfg_file.read_text())["run_actions"]["enabled"])
+        self.assertNotIn("full permissions", out)
+        # Re-running keeps "off": it's in the file now.
+        self.cli("setup", "--provider", "local", "--yes", "--no-test")
+        self.assertFalse(json.loads(self.cfg_file.read_text())["run_actions"]["enabled"])
+        self.cli("setup", "--provider", "local", "--commands", "on", "--yes", "--no-test")
+        ra = json.loads(self.cfg_file.read_text())["run_actions"]
+        self.assertTrue(ra["enabled"])
+        self.assertEqual(ra["allow"], "all")
+
+    def test_rerun_keeps_hand_edits(self):
+        self.cli("setup", "--provider", "grok", "--api-key", "k", "--yes", "--no-test")
+        cfg = json.loads(self.cfg_file.read_text())
+        cfg["providers"]["xai"]["model"] = "grok-4.5"
+        cfg["run_actions"].update({"allow": ["ls", "rm"], "max_commands": 7})
+        cfg["install"]["remove_old"] = False
+        self.cfg_file.write_text(json.dumps(cfg))
+        rc, out = self.cli("setup", "--provider", "grok", "--yes", "--no-test")
+        self.assertEqual(rc, 0, out)
+        cfg = json.loads(self.cfg_file.read_text())
+        self.assertEqual(cfg["providers"]["xai"]["model"], "grok-4.5")
+        self.assertEqual(cfg["run_actions"]["allow"], ["ls", "rm"])
+        self.assertEqual(cfg["run_actions"]["max_commands"], 7)
+        self.assertFalse(cfg["install"]["remove_old"])
+        # --reset puts the model and commands back to the defaults, keeps the rest.
+        rc, out = self.cli("setup", "--provider", "grok", "--reset", "--yes", "--no-test")
+        cfg = json.loads(self.cfg_file.read_text())
+        self.assertEqual(cfg["providers"]["xai"]["model"], "auto")
+        self.assertEqual(cfg["run_actions"]["allow"], "all")
+        self.assertEqual(cfg["run_actions"]["max_commands"], 7)
+
+    def test_old_shipped_defaults_move_to_the_new_ones(self):
+        self.cfg_file.parent.mkdir(parents=True)
+        self.cfg_file.write_text(json.dumps({
+            "provider": "xai", "providers": {"xai": {"type": "xai", "model": "grok-4"}},
+            "run_actions": {"enabled": False, "timeout_seconds": 60, "max_commands": 20,
+                            "allow": []}}))
+        rc, out = self.cli("setup", "--provider", "grok", "--api-key", "k", "--yes", "--no-test")
+        self.assertEqual(rc, 0, out)
+        cfg = json.loads(self.cfg_file.read_text())
+        self.assertEqual(cfg["providers"]["xai"]["model"], "auto")
+        self.assertEqual(cfg["run_actions"]["allow"], "all")
+        self.assertTrue(cfg["run_actions"]["enabled"])
+
+    def test_setup_shows_what_auto_picks(self):
+        listing = [{"id": "grok-4.3", "created": 100}, {"id": "grok-4.7", "created": 300},
+                   {"id": "grok-4.20-0309-reasoning", "created": 200}]
+        with mock.patch("baton.models.list_models", return_value=listing), \
+                mock.patch("baton.wizard.test_connection", return_value=(True, "pong")) as t:
+            rc, out = self.cli("setup", "--provider", "grok", "--api-key", "k", "--yes")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("auto (grok-4.7 right now)", out)
+        self.assertEqual(t.call_args[0][0]["model"], "grok-4.7")
+        self.assertEqual(json.loads(self.cfg_file.read_text())["providers"]["xai"]["model"], "auto")
 
     def test_custom_commands_need_a_list(self):
         rc, out = self.cli("setup", "--provider", "local", "--commands", "custom",
@@ -392,6 +462,39 @@ class ReadOnly(unittest.TestCase):
 
     def test_limits_note_mentions_read_only(self):
         self.assertIn("Writing to files", actions.limits_note(self.CFG, "xai"))
+
+
+class AllCommands(unittest.TestCase):
+    CFG = {"run_actions": {"enabled": True, "allow": "all", "max_commands": 3}}
+
+    def test_any_command_runs(self):
+        d = tempfile.mkdtemp()
+        out = actions.run_allowed("```bash\ntouch a && mkdir b\n```", self.CFG, "xai", cwd=d)
+        self.assertTrue(out["ok"], out["summary"])
+        self.assertEqual(sorted(os.listdir(d)), ["a", "b"])
+
+    def test_cap_still_applies(self):
+        d = tempfile.mkdtemp()
+        out = actions.run_allowed("```bash\ntouch a; touch b; touch c; touch d\n```",
+                                  self.CFG, "xai", cwd=d)
+        self.assertEqual(out.get("not_run"), "too_many")
+        self.assertEqual(os.listdir(d), [])
+
+    def test_all_spellings(self):
+        for allow in ("all", "ALL", "*", ["all"], ["*"], {"xai": "all"}, {"*": "all"}):
+            self.assertTrue(actions.allows_all({"run_actions": {"allow": allow}}, "xai"), allow)
+        for allow in ([], ["ls"], "", None, {"openai": "all"}):
+            self.assertFalse(actions.allows_all({"run_actions": {"allow": allow}}, "xai"), allow)
+
+    def test_limits_note_has_no_list(self):
+        note = actions.limits_note(self.CFG, "xai")
+        self.assertIn("at most 3 commands", note)
+        self.assertNotIn("has to be one of", note)
+
+    def test_off_still_means_off(self):
+        cfg = {"run_actions": {"enabled": False, "allow": "all"}}
+        out = actions.run_allowed("```bash\ntouch a\n```", cfg, "xai", cwd=tempfile.mkdtemp())
+        self.assertFalse(out["ran"])
 
 
 if __name__ == "__main__":
