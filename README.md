@@ -1,6 +1,26 @@
 # Baton
 
-A Claude Code hook that adds answers from a second model you configure.
+When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) turns down a request, Baton sends it to another model you pick (Grok, OpenAI, Anthropic, a local server) and shows that answer where the refusal would have been. The answer ends with a tag like `(via Grok)` so you know where it came from.
+
+## How a refusal becomes an answer
+
+Three hooks. `UserPromptSubmit` only remembers what you asked and adds nothing to Claude's context. `MessageDisplay` does the work. `Stop` is the backstop.
+
+A reply reaches `MessageDisplay` before it's drawn. A word scan reads it for a first-person refusal, and an optional judge model takes the ones the scan misses. The judge is `"auto"`, so it's on only when the provider has a key or is a local server. It runs with `BATON_JUDGE_ACTIVE` set, which switches the handoff off inside its own call so it can't recurse. A one-line status before a tool call ("Looking at the file first.") gets the scan only, because judging it would race the provider against Claude doing the work.
+
+On a refusal the request goes to the provider with the last 4 messages and 10 tool calls, each clipped. The hook then draws the answer in place of the refusal, and anything Claude says after it in that turn is drawn as a zero-width space. `displayContent` changes only what's on screen, so the transcript and the model keep the original text. The hook gets 120 seconds, enough for a slow provider and its commands.
+
+`Stop` hands off only when display didn't, which happens when display timed out or never saw the reply. It never blocks, so you don't get "Hook re-prompted Claude" rows.
+
+Only the current turn counts. A turn a classifier stopped, a tool call you turned down, a write Holdback already refused: none of those say anything about the reply being checked now. Questions about Baton itself are left alone, and a reply that failed for a technical reason it names (a missing file, a network error) isn't a refusal.
+
+## Running commands
+
+For a task rather than a question, the provider answers with one fenced `bash` block. The body runs verbatim as a temp script under `set -e`, in Claude's working directory, so quoting, loops and `python3 -c` work as written. API keys are kept out of that script's environment.
+
+Every simple command has to be on the allow list unless `run_actions.allow` is `"all"`: each part of a chain or pipe, each command in a loop or `if` body, anything in `$(...)`. `max_commands` caps how many there are. A block that fails either check doesn't run at all, since skipping some lines would change what the rest does. The provider is told both limits up front, and if its block still misses it gets one more try with the reason.
+
+What you see is the runner's own summary of what ran, like `Deleted /tmp/example.txt.`, not the provider's prose, which can still carry fences or refusal wording. A delete is checked against what existed before the script, so the result never claims a delete of something that was already gone.
 
 ## Install
 
@@ -57,7 +77,7 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 | :--- | :--- | :--- |
 | `enabled` | `true` | Off switch |
 | `provider` | `""` | Name of an entry in `providers`. Nothing is sent while it's empty. |
-| `providers.<name>` | | `type` (`xai`, `openai`, `anthropic`, `openai_compatible`), `model`, `api_key_env`, `base_url` |
+| `providers.<name>` | | `type` (`xai`, `openai`, `anthropic`, `openai_compatible`, `github_issue`), `model`, `api_key_env`, `base_url` |
 | `providers.<name>.model` | `"auto"` | `"auto"` is the provider's newest flagship, read from its model list once a day (a local server: the first model it lists). Or a model name. |
 | `timeout_seconds` | `300` | How long to wait for the provider |
 | `judge.enabled` | `"auto"` | A second check on whether Claude declined. `"auto"` uses it when the provider has a key or is local. |
@@ -71,11 +91,13 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 
 Environment overrides: `BATON=0` (off), `BATON_PROVIDER`, `BATON_MODEL`, `BATON_TIMEOUT`, `BATON_JUDGE=0`, `BATON_RUN_ACTIONS=0|1`, `BATON_CONFIG`, `BATON_STATE`.
 
+The `queue` entry in the example config is a different sort of provider. `github_issue` files the task as an issue in a repo you name and waits for a comment starting with `## Handback`, for when a person or another bot answers instead of a model. `setup` doesn't offer it, so set it in the config by hand.
+
 ## Privacy
 
-API keys are stored in `~/.config/baton/secrets.env` with mode 600, or read from your environment. Each key is only sent to its own provider, and keys are left out of the environment of any command Baton runs.
+API keys are stored in `~/.config/baton/secrets.env` with mode 600, or read from your environment. Each key is only sent to its own provider.
 
-When Claude declines a request, Baton sends that request, your last few messages and recent tool calls (clipped) to the provider you chose, and shows its answer in place of Claude's reply, marked `(via <provider>)`. The Claude Code transcript is not changed. Logs stay on your machine in `~/.local/state/baton`.
+What leaves your machine on a handoff is the request, your last few messages and recent tool calls, clipped. Logs stay in `~/.local/state/baton`.
 
 ## Uninstall
 
@@ -91,4 +113,4 @@ Baton used to be called claude-handoff. `baton setup` or `baton install` replace
 
 To run the tests from a checkout: `python3 -m unittest`.
 
-MIT licensed, see [LICENSE](LICENSE).
+Built with Python, standard library only. MIT licensed, see [LICENSE](LICENSE).
