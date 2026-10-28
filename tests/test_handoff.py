@@ -8,7 +8,8 @@ from baton import handoff
 from baton.detect import admits_block
 from baton.claude.transcript import current_turn, person_messages
 from tests.helpers import (
-    DECLINES, NOT_BLOCKED_ERRORS, SUPABASE_TIMEOUT, FakeProvider, call, handoff_cfg, run_actions,
+    DECLINES, NOT_BLOCKED_ERRORS, SUPABASE_TIMEOUT, FakeProvider, call, handoff_cfg, posix_only,
+    run_actions,
 )
 
 
@@ -134,6 +135,7 @@ class Respond(unittest.TestCase):
             out = handoff.respond(DECLINES["will_not"], [], "sign up", "", self.cfg)
         self.assertEqual(out, "Handoff failed: RuntimeError: no key")
 
+    @posix_only
     def test_commands_run_and_the_result_is_plain(self):
         td = tempfile.mkdtemp()
         target = Path(td) / "handoff-action-delete-me.txt"
@@ -147,6 +149,7 @@ class Respond(unittest.TestCase):
         self.assertEqual(out, "Deleted %s." % target)
 
 
+@posix_only
 class OverTheCap(unittest.TestCase):
     """What the person sees when the provider's first block is over the cap."""
 

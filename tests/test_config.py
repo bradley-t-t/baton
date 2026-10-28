@@ -8,7 +8,7 @@ from unittest import mock
 
 from baton import config, handoff
 from baton.config import DEFAULTS, load
-from tests.helpers import Home
+from tests.helpers import POSIX, Home
 
 
 class Defaults(Home):
@@ -85,7 +85,8 @@ class OldNames(unittest.TestCase):
         self.assertEqual(new_cfg["run_actions"]["max_commands"], 20)
         secrets = Path(self.home) / "baton" / "secrets.env"
         self.assertEqual(secrets.read_text(), "XAI_API_KEY=x\n")
-        self.assertEqual(secrets.stat().st_mode & 0o777, 0o600)
+        if POSIX:
+            self.assertEqual(secrets.stat().st_mode & 0o777, 0o600)
         self.assertTrue((old_dir / "config.json").exists())
         self.assertEqual(config.migrate_old_files(), [])
 

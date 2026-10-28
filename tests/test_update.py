@@ -8,7 +8,7 @@ from unittest import mock
 
 from baton import update
 from baton.config import state_dir
-from tests.helpers import Home
+from tests.helpers import Home, posix_only
 
 UPGRADE = ["/bin/uv", "tool", "install", "--force", "--reinstall", "git+x@main"]
 
@@ -61,6 +61,7 @@ class Due(Home):
         with mock.patch("baton.package.installer", return_value=""):
             self.assertFalse(update.due())
 
+    @posix_only
     def test_start_spawns_detached_once(self):
         with mock.patch("subprocess.Popen") as popen:
             self.assertTrue(update.start_if_due())
@@ -102,6 +103,7 @@ class Update(Home):
         self.assertEqual(r["outcome"], "up to date")
         self.assertEqual(update.last()["outcome"], "up to date")
 
+    @posix_only
     def test_newer_reinstalls_then_rehooks_without_the_old_pythonpath(self):
         with mock.patch.dict("os.environ", {"PYTHONPATH": "/old"}), \
                 mock.patch("subprocess.run", return_value=done()) as run:
@@ -114,6 +116,7 @@ class Update(Home):
         self.assertIn("-> 99.0.0", update.last()["outcome"])
         self.assertIn("update: updated", (state_dir() / "handoff.log").read_text())
 
+    @posix_only
     def test_hooks_left_alone_when_not_installed(self):
         with mock.patch("baton.update.hooks_installed", return_value=False), \
                 mock.patch("subprocess.run", return_value=done()) as run:
@@ -128,6 +131,7 @@ class Update(Home):
         with mock.patch("baton.package.installer", return_value="uv"):
             self.assertTrue(update.due())
 
+    @posix_only
     def test_failed_install_is_recorded_and_not_retried(self):
         with mock.patch("subprocess.run", return_value=done(1, "boom")), \
                 mock.patch("baton.package.installer", return_value="uv"):

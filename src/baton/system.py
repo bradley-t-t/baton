@@ -124,6 +124,16 @@ def git_bash() -> str:
     return ""
 
 
+def python_command() -> str:
+    """The name that starts Python here. On Windows, python3 is often only the Store's
+    placeholder under WindowsApps, which runs nothing."""
+    for name in ("python3", "python", "py"):
+        found = shutil.which(name)
+        if found and not (windows() and "windowsapps" in found.lower()):
+            return name
+    return "python3"
+
+
 def powershell() -> str:
     """PowerShell 7 (pwsh) when it's installed, else Windows PowerShell."""
     return shutil.which("pwsh") or shutil.which("powershell") or "powershell.exe"

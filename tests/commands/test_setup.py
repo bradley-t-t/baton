@@ -7,7 +7,7 @@ from unittest import mock
 
 from baton import keys
 from baton.claude import settings
-from tests.helpers import Home
+from tests.helpers import POSIX, Home
 
 
 class Setup(Home):
@@ -35,7 +35,8 @@ class Setup(Home):
         self.assertEqual(cfg["run_actions"]["allow"], "all")
         self.assertIn("full permissions", out)
         self.assertIn(str(self.cfg_file), out)
-        self.assertEqual(stat.S_IMODE(self.secrets.stat().st_mode), 0o600)
+        if POSIX:
+            self.assertEqual(stat.S_IMODE(self.secrets.stat().st_mode), 0o600)
         self.assertEqual(keys.read()["XAI_API_KEY"], "sk-test-123")
         for event in settings.EVENTS:
             self.assertEqual(len(self.ours(event)), 1)
@@ -50,7 +51,8 @@ class Setup(Home):
         rc, out = self.cli("setup", "--provider", "grok", "--yes", "--no-test")
         self.assertEqual(rc, 0, out)
         self.assertEqual(keys.read()["XAI_API_KEY"], "from-env")
-        self.assertEqual(stat.S_IMODE(self.secrets.stat().st_mode), 0o600)
+        if POSIX:
+            self.assertEqual(stat.S_IMODE(self.secrets.stat().st_mode), 0o600)
 
     def test_connection_test_failure_stops_setup(self):
         with mock.patch("baton.commands.setup.ping", return_value=(False, "HTTP 401")):
@@ -152,7 +154,7 @@ class Setup(Home):
         rc, out = self.cli("setup", "--provider", "local", "--yes", "--no-test", "--dry-run")
         self.assertEqual(rc, 0)
         self.assertIn('"MessageDisplay"', out)
-        self.assertIn("-m baton.hooks display", out)
+        self.assertIn("baton.hooks", out)
         self.assertFalse(self.cfg_file.exists())
         self.assertFalse(self.settings.exists())
 

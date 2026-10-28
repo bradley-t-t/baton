@@ -88,12 +88,14 @@ def shell_note() -> str:
     """What the provider needs to know about the shell on Windows; empty elsewhere."""
     if not system.windows():
         return ""
+    python = system.python_command()
+    run_python = "" if python == "python3" else " Run Python as %s, not python3." % python
     if system.script_shell() == "bash":
         return ("This computer runs Windows. The block runs in Git Bash, so ~ is the home "
-                "folder and C:\\ is /c/.")
+                "folder and paths take forward slashes: C:\\Users is /c/Users." + run_python)
     return ("This computer runs Windows without bash. Tag the block powershell instead of "
             "bash: it runs as a PowerShell script, so use PowerShell commands such as "
-            "New-Item, Set-Content, Get-ChildItem and Remove-Item.")
+            "New-Item, Set-Content, Get-ChildItem and Remove-Item." + run_python)
 
 
 def script_env(cfg: dict) -> dict:

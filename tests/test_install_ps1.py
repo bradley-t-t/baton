@@ -5,12 +5,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "install.ps1"
-PWSH = shutil.which("pwsh")
+# Windows PowerShell 5.1 counts: install.ps1 has to run there too.
+PWSH = shutil.which("pwsh") or (os.name == "nt" and shutil.which("powershell"))
 
 # Replaces the registry functions and prints what a test asks for as JSON.
 FAKES = r'''
@@ -23,7 +25,7 @@ function Save-PathMark([string]$Dir) { $script:Marked = $Dir }
 '''
 
 
-@unittest.skipUnless(PWSH, "needs pwsh")
+@unittest.skipUnless(PWSH, "needs PowerShell")
 class InstallPs1(unittest.TestCase):
     def run_ps(self, body: str, **env) -> dict:
         d = Path(tempfile.mkdtemp())
@@ -32,7 +34,8 @@ class InstallPs1(unittest.TestCase):
         full = dict(os.environ, BATON_INSTALL_TEST=str(test), FAKE_USER_PATH="",
                     FAKE_MACHINE_PATH="")
         full.update(env)
-        p = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(SCRIPT)],
+        p = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                            "-File", str(SCRIPT)],
                            capture_output=True, text=True, env=full, timeout=60)
         self.assertEqual(p.returncode, 0, p.stderr)
         return json.loads(p.stdout.strip().splitlines()[-1])
@@ -82,9 +85,9 @@ $b = Add-BinToPath 'C:\Users\t\.local\bin' 6>$null
 
     def test_program_arguments_keep_their_spaces(self):
         r = self.run_ps(r'''
-$code = Invoke-Interactive 'python3' @('-c', 'import sys; sys.exit(0 if sys.argv[1:] == ["a b", "", "c\"d"] else 3)', 'a b', '', 'c"d')
+$code = Invoke-Interactive $env:PYTHON @('-c', 'import sys; sys.exit(0 if sys.argv[1:] == ["a b", "", "c\"d"] else 3)', 'a b', '', 'c"d')
 @{code=$code} | ConvertTo-Json -Compress
-''')
+''', PYTHON=sys.executable)
         self.assertEqual(r["code"], 0)
 
 

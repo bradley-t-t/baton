@@ -211,6 +211,14 @@ class ScriptShell(unittest.TestCase):
             cfg = {"run_actions": {"enabled": True, "allow": "all"}}
             self.assertIn("Tag the block powershell", runner.limits_note(cfg, "xai"))
 
+    def test_python_is_not_the_store_placeholder(self):
+        found = {"python3": "C:\\Users\\t\\AppData\\Local\\Microsoft\\WindowsApps\\python3.exe",
+                 "python": "C:\\Python312\\python.exe"}
+        with mock.patch("shutil.which", side_effect=found.get), \
+                mock.patch("baton.system.git_bash", return_value="C:\\Git\\bin\\bash.exe"):
+            self.assertEqual(system.python_command(), "python")
+            self.assertIn("Run Python as python, not python3.", runner.shell_note())
+
     def test_powershell_fences_are_read(self):
         self.assertEqual(extract_fences("```powershell\nGet-ChildItem\n```"), ["Get-ChildItem\n"])
 

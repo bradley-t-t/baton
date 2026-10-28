@@ -1,4 +1,5 @@
 """How Baton was installed, and the commands that reinstall or remove it."""
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,14 +26,15 @@ class Installer(unittest.TestCase):
     def test_tool_is_found_outside_path(self):
         home = Path(tempfile.mkdtemp())
         (home / ".local" / "bin").mkdir(parents=True)
-        uv = home / ".local" / "bin" / "uv"
+        uv = home / ".local" / "bin" / ("uv" if os.name != "nt" else "uv.exe")
         uv.write_text("")
         uv.chmod(0o755)
-        with mock.patch.dict("os.environ", {"HOME": str(home), "PATH": "/nowhere"}), \
+        with mock.patch.dict("os.environ", {"HOME": str(home), "USERPROFILE": str(home),
+                                            "PATH": "/nowhere"}), \
                 mock.patch("baton.package.TOOL_DIRS", ("~/.local/bin",)):
             self.assertEqual(package.tool("uv"), str(uv))
             self.assertEqual(package.tool("pipx"), "")
-            self.assertEqual(package.search_path(), "/nowhere:" + str(uv.parent))
+            self.assertEqual(package.search_path(), "/nowhere" + os.pathsep + str(uv.parent))
 
 
 class Upgrade(unittest.TestCase):

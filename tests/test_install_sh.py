@@ -9,10 +9,12 @@ from pathlib import Path
 from unittest import mock
 
 from baton import package
+from tests.helpers import posix_only
 
 INSTALL_SH = Path(__file__).resolve().parent.parent / "install.sh"
 
 
+@posix_only
 class Harness(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
