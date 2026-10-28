@@ -50,7 +50,7 @@
   "run_actions": {
     "enabled": true,
     "timeout_seconds": 60,
-    "max_commands": 5,
+    "max_commands": 20,
     "allow": ["rm", "ls", "cat", "echo", "printf", "mkdir", "touch", "mv", "cp", "chmod", "pwd", "head", "tail", "wc", "stat", "test", "true", "false", "python3", "python", "bash", "sh"]
   },
   "never_handoff_patterns": [],

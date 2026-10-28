@@ -2,7 +2,11 @@
 # Absolute wrapper so Claude has one command for the draft check.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SECRETS="${HOME}/.config/claude-handoff/secrets.env"
+SECRETS="${HOME}/.config/baton/secrets.env"
+# Baton used to be claude-handoff; use its secrets file until install copies it over.
+if [ ! -f "$SECRETS" ] && [ -f "${HOME}/.config/claude-handoff/secrets.env" ]; then
+  SECRETS="${HOME}/.config/claude-handoff/secrets.env"
+fi
 if [ -f "$SECRETS" ]; then
   set -a
   # shellcheck disable=SC1090
@@ -18,4 +22,4 @@ else
   PY="${PYTHON:-python3}"
 fi
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
-exec "$PY" -m claude_handoff.cli check "$@"
+exec "$PY" -m baton.cli check "$@"

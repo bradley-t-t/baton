@@ -165,13 +165,17 @@ def about_handoff(text: str) -> bool:
     """Whether the person's own message is about the handoff tool itself ("why didn't the
     handoff fire?"). Such a turn is a conversation about the tool, not a task to hand off.
 
-    Pathnames like /tmp/claude-handoff-test-delete-me.txt must not match: require that
-    "claude-handoff" is not a path segment (no / before it) and not a longer hyphenated
-    filename (no -word after it).
+    Baton was called claude-handoff, so both names count. Pathnames like
+    /tmp/claude-handoff-test-delete-me.txt must not match: the name can't be a path
+    segment (no / before it) or part of a longer hyphenated filename (no -word after
+    it). "baton" is also an everyday word, so it only counts next to a word about the
+    tool ("the baton hook", "why didn't baton fire").
     """
     t = normalize(text).lower()
     return bool(re.search(
         r"(?<![/\w.-])claude[- ]handoff\b(?!-[\w])"
+        r"|(?<![/\w.-])baton (?:hooks?|tool|provider|config|install|check|log|handoff)\b"
+        r"|\b(?:why|did|does|is|didn't|doesn't|isn't|wasn't) baton\b(?![/-])"
         r"|\bhand ?off (?:hook|tool|provider|config)\b"
         r"|\b(?:the|this|that) hand ?off\b"
         r"|\bhandback\b",
@@ -192,7 +196,7 @@ def matches_any(text: str, patterns) -> bool:
 SKIPPED_CHECK = re.compile(
     r"\bI skipped\b"
     r"|\bI (?:did not|didn't) (?:run|use|follow).{0,60}\b(?:check|handoff|hook|tether)\b"
-    r"|\bskipped (?:both|the )?(?:claude[- ]handoff|handoff|tether|check|hooks?)\b"
+    r"|\bskipped (?:both|the )?(?:baton|claude[- ]handoff|handoff|tether|check|hooks?)\b"
     r"|\b(?:would|will) (?:pass|hand).{0,40}\b(?:another agent|handoff|Grok)\b"
     r"|\bI (?:won't|will not|am not going to) (?:post|send|relay).{0,40}\b(?:Grok|handoff)\b",
     re.I,

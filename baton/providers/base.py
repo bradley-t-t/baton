@@ -38,7 +38,7 @@ def http_json(url: str, method: str, headers: dict, body, timeout: int = 120):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method=method,
                                  headers={"Content-Type": "application/json",
-                                          "User-Agent": "claude-handoff", **(headers or {})})
+                                          "User-Agent": "baton", **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read() or b"{}"
@@ -60,10 +60,10 @@ DEFAULT_SYSTEM = (
     "in ONE fenced block tagged bash or sh. A local runner writes that block to a temp script "
     "and runs it with bash in the person's working directory, then reports the outcome. Do not "
     "refuse shell or file tasks with 'I cannot' or 'I won't' — emit the commands instead.\n\n"
-    "Prefer simple shell. For creating files use printf or a small for-loop, for example:\n"
+    "Prefer simple shell and few commands. When the same command repeats, use one for-loop "
+    "instead of a line per item, for example:\n"
     "```bash\n"
-    "printf '%s\\n' 'alpha bravo' > ~/Downloads/ch-test-1.txt\n"
-    "printf '%s\\n' 'charlie delta' > ~/Downloads/ch-test-2.txt\n"
+    "for i in 1 2 3 4 5; do printf 'file %s\\n' \"$i\" > ~/Downloads/test-$i.txt; done\n"
     "```\n"
     "Avoid nested quotes in python3 -c when a printf/redirect will do. Prefer ~ or absolute "
     "paths. Keep surrounding prose short and factual (e.g. 'Created 5 files in ~/Downloads.'); "

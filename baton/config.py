@@ -1,4 +1,9 @@
-"""Configuration: ~/.config/claude-handoff/config.json, with environment overrides."""
+"""Configuration: ~/.config/baton/config.json, with environment overrides.
+
+Baton was called claude-handoff. The old names still work: a CLAUDE_HANDOFF_* variable is
+read when its BATON_* twin isn't set, and ~/.config/claude-handoff/ is used when
+~/.config/baton/ has no file of that name yet. `baton install` copies the old files over.
+"""
 
 from __future__ import annotations
 
@@ -20,26 +25,60 @@ DEFAULTS = {
         "anthropic": {"type": "anthropic", "model": "claude-sonnet-4-5", "api_key_env": "ANTHROPIC_API_KEY"},
     },
     "judge": {"enabled": "auto", "provider": "", "model": "", "timeout_seconds": 45},
-    "run_actions": {"enabled": False, "timeout_seconds": 60, "max_commands": 5, "allow": []},
+    "run_actions": {"enabled": False, "timeout_seconds": 60, "max_commands": 20, "allow": []},
     "never_handoff_patterns": [],
     "context": {"user_messages": 4, "tool_calls": 10},
 }
 
 
+OLD_NAME = "claude-handoff"
+OLD_ENV = "CLAUDE_HANDOFF"
+
+
+def env(name: str = "", default=None):
+    """BATON[_name], else the old CLAUDE_HANDOFF[_name], else default."""
+    suffix = ("_" + name) if name else ""
+    for var in ("BATON" + suffix, OLD_ENV + suffix):
+        v = os.environ.get(var)
+        if v is not None and v != "":
+            return v
+    return default
+
+
+def config_home() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config"))
+
+
+def config_dir() -> Path:
+    return config_home() / "baton"
+
+
+def old_config_dir() -> Path:
+    return config_home() / OLD_NAME
+
+
+def config_file(name: str) -> Path:
+    """~/.config/baton/<name>, or the claude-handoff copy when only that one exists."""
+    new = config_dir() / name
+    old = old_config_dir() / name
+    if not new.exists() and old.exists():
+        return old
+    return new
+
+
 def config_path() -> Path:
-    p = os.environ.get("CLAUDE_HANDOFF_CONFIG")
+    p = env("CONFIG")
     if p:
         return Path(os.path.expanduser(p))
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "claude-handoff" / "config.json"
+    return config_file("config.json")
 
 
 def state_dir() -> Path:
-    p = os.environ.get("CLAUDE_HANDOFF_STATE")
+    p = env("STATE")
     if p:
         return Path(os.path.expanduser(p))
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    return Path(base) / "claude-handoff"
+    return Path(base) / "baton"
 
 
 def _merge(base: dict, over: dict) -> dict:
@@ -65,23 +104,22 @@ def load(path: Path = None) -> dict:
     except (OSError, ValueError):
         user = {}
     c = _merge(DEFAULTS, user)
-    env = os.environ
-    if env.get("CLAUDE_HANDOFF") is not None and env.get("CLAUDE_HANDOFF") != "":
-        c["enabled"] = _bool(env["CLAUDE_HANDOFF"])
-    if env.get("CLAUDE_HANDOFF_PROVIDER"):
-        c["provider"] = env["CLAUDE_HANDOFF_PROVIDER"]
-    if env.get("CLAUDE_HANDOFF_TIMEOUT"):
+    if env() is not None:
+        c["enabled"] = _bool(env())
+    if env("PROVIDER"):
+        c["provider"] = env("PROVIDER")
+    if env("TIMEOUT"):
         try:
-            c["timeout_seconds"] = int(env["CLAUDE_HANDOFF_TIMEOUT"])
+            c["timeout_seconds"] = int(env("TIMEOUT"))
         except ValueError:
             pass
-    if env.get("CLAUDE_HANDOFF_JUDGE"):
-        c["judge"]["enabled"] = _bool(env["CLAUDE_HANDOFF_JUDGE"])
-    if env.get("CLAUDE_HANDOFF_RUN_ACTIONS"):
-        c["run_actions"]["enabled"] = _bool(env["CLAUDE_HANDOFF_RUN_ACTIONS"])
+    if env("JUDGE"):
+        c["judge"]["enabled"] = _bool(env("JUDGE"))
+    if env("RUN_ACTIONS"):
+        c["run_actions"]["enabled"] = _bool(env("RUN_ACTIONS"))
     p = provider_config(c)
-    if env.get("CLAUDE_HANDOFF_MODEL") and p is not None:
-        p["model"] = env["CLAUDE_HANDOFF_MODEL"]
+    if env("MODEL") and p is not None:
+        p["model"] = env("MODEL")
     return c
 
 

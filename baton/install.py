@@ -9,7 +9,10 @@ import sys
 import time
 from pathlib import Path
 
-MARKER = "claude-handoff"  # used to find our own entries in the hooks lists
+# Strings that mark our own entries in the hooks lists. Baton used to be called
+# claude-handoff, so entries from an old install count as ours too: install replaces
+# them instead of running both, and uninstall removes them.
+MARKERS = ("-m baton.hooks", "-m claude_handoff.hooks")
 
 
 def package_root() -> Path:
@@ -24,22 +27,27 @@ def settings_path() -> Path:
 
 
 def secrets_env_path() -> Path:
+    return Path.home() / ".config" / "baton" / "secrets.env"
+
+
+def old_secrets_env_path() -> Path:
     return Path.home() / ".config" / "claude-handoff" / "secrets.env"
 
 
 def hook_command(event: str) -> str:
     """A shell command Claude Code will run for this event. Absolute path so it works
-    no matter where the session's cwd is. Sources ~/.config/claude-handoff/secrets.env
+    no matter where the session's cwd is. Sources ~/.config/baton/secrets.env
     when that file exists (API keys), without printing them."""
     root = package_root()
     py = sys.executable or "python3"
     event_name = {"UserPromptSubmit": "prompt", "Stop": "stop", "MessageDisplay": "display"}.get(event, "stop")
-    run = 'PYTHONPATH="%s" "%s" -m claude_handoff.hooks %s' % (root, py, event_name)
+    run = 'PYTHONPATH="%s" "%s" -m baton.hooks %s' % (root, py, event_name)
     # Always wrap with a conditional source so install stays idempotent whether or not
     # the secrets file is present yet.
-    secrets = str(secrets_env_path())
-    return ('if [ -f "%s" ]; then set -a; . "%s"; set +a; fi; %s'
-            % (secrets, secrets, run))
+    new, old = str(secrets_env_path()), str(old_secrets_env_path())
+    return ('if [ -f "%s" ]; then set -a; . "%s"; set +a; '
+            'elif [ -f "%s" ]; then set -a; . "%s"; set +a; fi; %s'
+            % (new, new, old, old, run))
 
 
 def _is_ours(entry) -> bool:
@@ -47,11 +55,13 @@ def _is_ours(entry) -> bool:
         return False
     # Claude Code shape: {"hooks": [{"type":"command","command":"..."}]} or a bare command.
     for h in entry.get("hooks") or []:
-        if isinstance(h, dict) and MARKER in (h.get("command") or ""):
+        if isinstance(h, dict) and _has_marker(h.get("command")):
             return True
-    if MARKER in (entry.get("command") or ""):
-        return True
-    return False
+    return _has_marker(entry.get("command"))
+
+
+def _has_marker(cmd) -> bool:
+    return any(m in (cmd or "") for m in MARKERS)
 
 
 def _ours_entry(event: str) -> dict:
@@ -88,6 +98,7 @@ def install(path: Path = None) -> Path:
         lst.append(_ours_entry(event))
         hooks[event] = lst
     _save(path, data)
+    migrate_old_files()
     # Seed an example config if none exists.
     from .config import config_path, DEFAULTS
     cfg = config_path()
@@ -99,6 +110,44 @@ def install(path: Path = None) -> Path:
         else:
             cfg.write_text(json.dumps(DEFAULTS, indent=2) + "\n")
     return path
+
+
+OLD_MAX_COMMANDS = 5  # what claude-handoff's config.example.json shipped
+
+
+def migrate_old_files() -> list:
+    """Copy config.json and secrets.env from ~/.config/claude-handoff/ to
+    ~/.config/baton/ when only the old one exists. The old files are left in place.
+
+    A copied config still on the old shipped max_commands of 5 is raised to the new
+    default, since 5 was low enough to reject ordinary multi-file tasks."""
+    from .config import DEFAULTS, config_dir, env, old_config_dir
+    if env("CONFIG"):
+        return []
+    moved = []
+    for name in ("config.json", "secrets.env"):
+        old, new = old_config_dir() / name, config_dir() / name
+        if not old.is_file() or new.exists():
+            continue
+        new.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(old, new)
+        if name == "secrets.env":
+            os.chmod(new, 0o600)
+        else:
+            _raise_old_cap(new, DEFAULTS["run_actions"]["max_commands"])
+        moved.append(str(new))
+    return moved
+
+
+def _raise_old_cap(path: Path, new_cap: int):
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return
+    ra = data.get("run_actions") if isinstance(data, dict) else None
+    if isinstance(ra, dict) and ra.get("max_commands") == OLD_MAX_COMMANDS:
+        ra["max_commands"] = new_cap
+        path.write_text(json.dumps(data, indent=2) + "\n")
 
 
 def uninstall(path: Path = None) -> Path:

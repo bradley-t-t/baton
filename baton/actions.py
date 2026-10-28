@@ -2,8 +2,10 @@
 
 Convention (README + provider system prompt): one ```bash / ```sh fence. The
 runner writes the fence body to a temp script and runs it with `bash` in the
-Claude session's cwd. ~ is expanded by bash. Allow-list is checked per simple
-command line (first real token). Off unless run_actions.enabled is true.
+Claude session's cwd. ~ is expanded by bash. The allow list is checked for every
+simple command, including each part of a chain, pipe, loop body or $(...), and
+run_actions.max_commands caps how many there can be. A block that fails either
+check is not run at all. Off unless run_actions.enabled is true.
 """
 
 from __future__ import annotations
@@ -130,16 +132,55 @@ def allowlist(cfg: dict, provider_name: str) -> set:
     return set()
 
 
-def scan_script_commands(body: str) -> list:
-    """First-token scan of each logical line in a script (skip keywords/assignments)."""
-    cmds = []
+# Words that open or close a compound command; what follows them is the command.
+LEADING = {"do", "then", "else", "elif", "if", "while", "until", "{", "}", "!", "time",
+           "done", "fi", "esac"}
+BACKTICK = re.compile(r"`([^`]*)`")
+
+
+def simple_commands(line: str) -> list:
+    """Every simple command in one logical line, for the allow list and the cap.
+
+    Splits at && || | ; & and at ( ) so chains, loop bodies, subshells and $(...)
+    are each checked, not just the first word of the line. Commands inside
+    backticks are checked too. A for/select/case header runs nothing and is
+    skipped. Text that can't be tokenized is returned whole, which fails closed
+    unless its first word is allowed.
+    """
+    out = []
+    for inner in BACKTICK.findall(line):
+        out.extend(simple_commands(inner))
+    line = BACKTICK.sub(" x ", line)
+    try:
+        lex = shlex.shlex(line, posix=True, punctuation_chars=";&|()")
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        return out + [line]
+    seg = []
+    def flush():
+        while seg and seg[0] in LEADING:
+            seg.pop(0)
+        if seg and seg[0] == "[":
+            seg[0] = "test"  # [ is test; [[ ]] is shell syntax that runs nothing itself
+        if seg and seg[0] not in ("for", "select", "case", "in", "[["):
+            out.append(shlex.join(seg))
+        seg.clear()
+    for tok in toks:
+        if tok and set(tok) <= set(";&|()"):
+            flush()
+        else:
+            seg.append(tok)
+    flush()
+    return out
+
+
+def script_commands(body: str) -> list:
+    """All simple commands in a script, each with a real executable as its first word."""
+    out = []
     for line in _logical_lines(body):
-        # Drop leading pipe/and/or separators when a line continues a pipeline oddly.
-        line = re.sub(r"^(?:\|\||&&|;|\|)\s*", "", line)
-        fw = first_word(line)
-        if fw:
-            cmds.append(line)
-    return cmds
+        out.extend(c for c in simple_commands(line) if first_word(c))
+    return out
 
 
 OPERATORS = {"&&", "||", "|", ";", "&", ";;", "|&"}
@@ -326,6 +367,29 @@ def failure_line(stderr: str, code) -> str:
     return ("It failed: %s." % msg) if msg else ("It failed (exit %s)." % code)
 
 
+def max_commands(cfg: dict) -> int:
+    ra = cfg.get("run_actions") or {}
+    try:
+        n = int(ra.get("max_commands") or 20)
+    except (TypeError, ValueError):
+        n = 20
+    return max(1, n)
+
+
+def limits_note(cfg: dict, provider_name: str) -> str:
+    """The runner's limits, for the provider's system prompt, so it writes a script
+    that will actually run. Empty when commands are not run at all."""
+    ra = cfg.get("run_actions") or {}
+    allow = allowlist(cfg, provider_name)
+    if not ra.get("enabled") or not allow:
+        return ""
+    return ("Runner limits: the block may have at most %d commands, counting each "
+            "command in a chain, pipe or loop body, and each command has to be one of: %s. A block over "
+            "the limit or with any other command is not run at all. When the same "
+            "command repeats, use one for-loop instead of a line per item."
+            % (max_commands(cfg), ", ".join(sorted(allow))))
+
+
 def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict:
     """Run allowed commands from text by writing each fence to a temp script.
 
@@ -342,28 +406,34 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
     if not allow:
         return empty
     timeout = int(ra.get("timeout_seconds") or 60)
-    max_n = int(ra.get("max_commands") or 20)
+    max_n = max_commands(cfg)
     fences = extract_fences(text)
     if not fences:
         return empty
 
     # Prefer a single combined script from all fences (one provider block is the norm).
     body = "\n\n".join(fences)
-    all_cmds = scan_script_commands(body)
-    if not all_cmds:
+    simple = script_commands(body)
+    if not simple:
         return empty
+    all_cmds = _logical_lines(body)
 
-    # Cap how many real commands we will accept in one fence.
-    if len(all_cmds) > max_n:
-        msg = "Too many commands in fence (%d > %d)" % (len(all_cmds), max_n)
-        return {"ran": True, "ok": False, "commands": all_cmds[:max_n], "results": [],
-                "summary": msg, "log": msg}
-    rejected = [c for c in all_cmds if first_word(c) not in allow]
+    # The whole block runs as one script, so it is all or nothing: skipping some
+    # lines would change what the rest of the script does. A block over the cap or
+    # with a command off the allow list is not run at all, and the result says so
+    # plainly. complete() asks the provider once more within the limits first.
+    if len(simple) > max_n:
+        msg = ("Nothing was run: the script had %d commands and the limit is %d "
+               "(run_actions.max_commands)." % (len(simple), max_n))
+        log("run_actions over cap: %d > %d" % (len(simple), max_n))
+        return {"ran": True, "ok": False, "commands": [], "results": [],
+                "summary": msg, "log": msg, "not_run": "too_many"}
+    rejected = [c for c in simple if first_word(c) not in allow]
     if rejected:
-        msg = "It wasn't run: %s is not allowed here." % first_word(rejected[0])
+        msg = "Nothing was run: %s is not on the allow list." % first_word(rejected[0])
         log("run_actions rejected: %s" % rejected[0][:80])
         return {"ran": True, "ok": False, "commands": [], "results": [],
-                "summary": msg, "log": msg}
+                "summary": msg, "log": msg, "not_run": "not_allowed"}
     allowed_cmds = all_cmds
     # Run the fence body verbatim so quotes, loops, and python -c stay intact.
     script = body if body.endswith("\n") else body + "\n"
@@ -378,7 +448,7 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
     started = time.monotonic()
     path = None
     try:
-        fd, path = tempfile.mkstemp(prefix="claude-handoff-", suffix=".sh")
+        fd, path = tempfile.mkstemp(prefix="baton-", suffix=".sh")
         with os.fdopen(fd, "w") as f:
             f.write("#!/usr/bin/env bash\nset -e\n")
             f.write(script)
