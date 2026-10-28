@@ -16,7 +16,7 @@ Only the current turn counts. A turn a classifier stopped, a tool call you turne
 
 ## Running commands
 
-For a task rather than a question, the provider answers with one fenced `bash` block. The body runs verbatim as a temp script under `set -e`, in Claude's working directory, so quoting, loops and `python3 -c` work as written. API keys are kept out of that script's environment.
+For a task rather than a question, the provider answers with one fenced `bash` block (on Windows it runs in Git Bash, or as a `powershell` block when Git isn't installed). The body runs verbatim as a temp script under `set -e`, in Claude's working directory, so quoting, loops and `python3 -c` work as written. API keys are kept out of that script's environment.
 
 Every simple command has to be on the allow list unless `run_actions.allow` is `"all"`: each part of a chain or pipe, each command in a loop or `if` body, anything in `$(...)`. `max_commands` caps how many there are. A block that fails either check doesn't run at all, since skipping some lines would change what the rest does. The provider is told both limits up front, and if its block still misses it gets one more try with the reason.
 
@@ -28,7 +28,15 @@ What you see is the runner's own summary of what ran, like `Deleted /tmp/example
 curl -fsSL https://taylorurl.com/baton | sh
 ```
 
-This installs the `baton` command with pipx or uv (it offers to install uv into `~/.local/bin` if neither is there), removes an old pip install of claude-handoff, adds the bin folder to your PATH in your shell's startup file (`.zshrc`, `.bashrc`, fish's `conf.d`, or `.profile`), then runs `baton setup` and `baton doctor`. Open a new terminal afterward to use `baton`. It never uses sudo. Needs macOS or Linux.
+This installs the `baton` command with pipx or uv (it offers to install uv into `~/.local/bin` if neither is there), removes an old pip install of claude-handoff, adds the bin folder to your PATH in your shell's startup file (`.zshrc`, `.bashrc`, fish's `conf.d`, or `.profile`), then runs `baton setup` and `baton doctor`. Open a new terminal afterward to use `baton`. It never uses sudo.
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://taylorurl.com/baton.ps1 | iex
+```
+
+The same steps, with the bin folder added to your user PATH. Run `baton setup` with options by passing them on: `& ([scriptblock]::Create((irm https://taylorurl.com/baton.ps1))) --provider local --yes`.
 
 Or by hand, with Python 3.9 or newer:
 
@@ -71,11 +79,11 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 
 ## Updates
 
-Baton keeps itself up to date. About once a day a hook starts a background check of the version on `main`, and if it's newer, reinstalls with pipx or uv, whichever installed it. Hooks never wait on it. `baton update` does it now, `baton update --check` only looks, and `baton doctor` shows the last check.
+Baton keeps itself up to date. About once a day a hook starts a background check of the version on `main`, and if it's newer, reinstalls with pipx or uv, whichever installed it (on Windows, a few seconds after Baton exits, since Windows won't replace a running program). Hooks never wait on it. `baton update` does it now, `baton update --check` only looks, and `baton doctor` shows the last check.
 
 ## Config
 
-`~/.config/baton/config.json`. `setup` writes it, and you can edit it by hand.
+`~/.config/baton/config.json`, or `%APPDATA%\baton\config.json` on Windows. `setup` writes it, and you can edit it by hand.
 
 | Key | Default | |
 | :--- | :--- | :--- |
@@ -99,9 +107,9 @@ The `queue` entry in the example config is a different sort of provider. `github
 
 ## Privacy
 
-API keys are stored in `~/.config/baton/secrets.env` with mode 600, or read from your environment. Each key is only sent to its own provider.
+API keys are stored in `~/.config/baton/secrets.env` with mode 600 (`%APPDATA%\baton\secrets.env` on Windows), or read from your environment. Each key is only sent to its own provider.
 
-What leaves your machine on a handoff is the request, your last few messages and recent tool calls, clipped. Logs stay in `~/.local/state/baton`.
+What leaves your machine on a handoff is the request, your last few messages and recent tool calls, clipped. Logs stay in `~/.local/state/baton` (`%LOCALAPPDATA%\baton` on Windows).
 
 ## Uninstall
 
@@ -109,7 +117,7 @@ What leaves your machine on a handoff is the request, your last few messages and
 baton uninstall --all
 ```
 
-This removes Baton's hooks and the PATH line the installer added, deletes `~/.config/baton` (config and keys), `~/.local/state/baton` and Baton's backups of `settings.json`, then removes the `baton` command with `pipx uninstall claude-baton` or `uv tool uninstall claude-baton`, whichever installed it. Other hooks in `settings.json` are left alone.
+This removes Baton's hooks and the PATH line the installer added, deletes `~/.config/baton` (config and keys), `~/.local/state/baton` and Baton's backups of `settings.json`, then removes the `baton` command with `pipx uninstall claude-baton` or `uv tool uninstall claude-baton`, whichever installed it. Other hooks in `settings.json` are left alone. On Windows it removes the user PATH entry the installer added, and the `baton` command a few seconds after it exits.
 
 `baton uninstall` on its own only removes the hooks, and `--purge` also deletes the config, keys, logs and backups.
 
