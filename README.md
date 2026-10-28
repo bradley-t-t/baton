@@ -1,6 +1,6 @@
 # Baton
 
-When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) turns down a request, Baton sends it to another model you pick (Grok, OpenAI, Anthropic, a local server) and shows that answer where the refusal would have been. The answer ends with a tag like `(via Grok)` so you know where it came from.
+When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) turns down a request, Baton sends it to another model you pick (Grok, OpenAI, Anthropic, a local server) and shows that answer where the refusal would have been.
 
 ## How a refusal becomes an answer
 

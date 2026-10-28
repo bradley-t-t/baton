@@ -7,7 +7,7 @@ from baton.hooks.display import HIDDEN
 from baton.state import clear_displayed, get_displayed, mark_displayed, remember_request
 from tests.helpers import DECLINES, HOLDBACK_REPLY, FakeProvider, handoff_cfg, run_hook, shown
 
-RESULT = "Deleted /tmp/x.\n(via Grok)"
+RESULT = "Deleted /tmp/x."
 
 
 class Display(unittest.TestCase):
