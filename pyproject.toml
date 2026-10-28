@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # import name are both baton.
 name = "claude-baton"
 dynamic = ["version"]
-description = "A Claude Code hook that adds answers from a second model you configure"
+description = "When Claude Code turns down a request, ask another AI and bring its answer back"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
