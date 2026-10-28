@@ -10,7 +10,7 @@ os.environ["BATON_JUDGE"] = "0"
 
 from baton import handoff  # noqa: E402
 from baton.detect import admits_block  # noqa: E402
-from baton.transcript import blocked_calls  # noqa: E402
+from baton.transcript import blocked_calls, current_turn, person_messages  # noqa: E402
 from tests.test_detect import DECLINES  # noqa: E402
 
 SUPABASE_TIMEOUT = ('MCP server "Supabase" tool "execute_sql" timed out after 180s. The server asked the user a '
@@ -41,6 +41,22 @@ def call(error, tool="mcp__supabase__execute_sql", inp=None):
             {"type": "user", "message": {"content": [
                 {"type": "tool_result", "tool_use_id": "t1", "is_error": True,
                  "content": [{"type": "text", "text": error}]}]}}]
+
+
+def person(text):
+    return {"type": "user", "message": {"role": "user", "content": text}}
+
+
+def assistant(text, **message):
+    return {"type": "assistant", "message": dict({"content": [{"type": "text", "text": text}]}, **message)}
+
+
+def classifier_turn():
+    """A turn cut off by the safety classifier, with the notice Claude Code adds after it."""
+    return [person("Wipe the staging database."),
+            assistant("I", stop_reason="refusal"),
+            person("Your response above was stopped by a safety classifier. Please try rephrasing."),
+            assistant("Understood.")]
 
 
 class BlockedDetection(unittest.TestCase):
@@ -91,6 +107,45 @@ class ReasonGate(unittest.TestCase):
             {"type": "text", "text": "partial"}]}, "error": "classifier"}]
         self.assertIsNone(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg))
 
+
+    def test_earlier_classifier_stop_does_not_block_a_later_decline(self):
+        entries = (classifier_turn() + [person("Delete the old backups."),
+                                        assistant("I'm still not doing it.")])
+        self.assertEqual(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg), {"kind": "decline"})
+
+    def test_classifier_stop_this_turn_is_not_handed_off(self):
+        entries = [person("Delete the old backups.")] + classifier_turn()[1:]
+        self.assertIsNone(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg))
+
+    def test_classifier_notice_is_not_the_persons_message(self):
+        entries = classifier_turn()
+        self.assertEqual(person_messages(entries), ["Wipe the staging database."])
+        self.assertEqual(current_turn(entries), entries)
+
+    def test_earlier_no_does_not_block_a_later_decline(self):
+        entries = ([person("Run the migration.")] + call(NOT_BLOCKED_ERRORS["user_rejected"])
+                   + [person("Fine, delete the temp files then.")])
+        self.assertEqual(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg), {"kind": "decline"})
+
+    def test_no_this_turn_still_skips(self):
+        entries = [person("Run the migration.")] + call(NOT_BLOCKED_ERRORS["user_rejected"])
+        self.assertIsNone(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg))
+
+    def test_earlier_holdback_does_not_block_a_later_decline(self):
+        held = "Holdback: held. This call would write a file. Never hand this off."
+        entries = ([person("Downloads I mean")] + call(held, tool="Write", inp={"file_path": "/tmp/x"})
+                   + [person("Now delete the temp files.")])
+        self.assertEqual(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg), {"kind": "decline"})
+
+    def test_earlier_blocked_call_is_not_this_turns(self):
+        entries = [person("Clean the table.")] + call(SUPABASE_TIMEOUT) + [person("What's the weather?")]
+        self.assertIsNone(handoff.reason("It didn't run. The approval prompt timed out.", entries, cfg=self.cfg))
+
+    def test_early_exit_is_logged(self):
+        entries = [person("Delete the old backups.")] + classifier_turn()[1:]
+        with mock.patch("baton.handoff.log") as log:
+            handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg)
+        self.assertIn("stopped by a classifier", " ".join(str(c) for c in log.call_args_list))
 
     def test_holdback_denial_is_not_handed_off(self):
         held = (
