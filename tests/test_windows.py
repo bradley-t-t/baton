@@ -84,7 +84,7 @@ class Updates(WindowsHome):
                 mock.patch("subprocess.Popen") as popen:
             self.assertTrue(update.start_if_due())
         kw = popen.call_args[1]
-        self.assertEqual(kw["creationflags"], 0x208)
+        self.assertEqual(kw["creationflags"], 0x1000208)
         self.assertNotIn("start_new_session", kw)
 
     def test_reinstall_waits_for_baton_to_exit(self):
@@ -109,7 +109,12 @@ class Updates(WindowsHome):
         line = popen.call_args[0][0]
         self.assertEqual(line, 'cmd.exe /d /s /c "ping -n 4 127.0.0.1 >nul & '
                                '"C:\\Program Files\\uv.exe" tool x && b"')
-        self.assertEqual(popen.call_args[1]["creationflags"], 0x208)
+        self.assertEqual(popen.call_args[1]["creationflags"], 0x1000208)
+
+    def test_stays_in_a_job_that_wont_let_it_leave(self):
+        with mock.patch("subprocess.Popen", side_effect=[OSError("access denied"), "p"]) as popen:
+            self.assertEqual(system.start_detached(["x"]), "p")
+        self.assertEqual([c[1]["creationflags"] for c in popen.call_args_list], [0x1000208, 0x208])
 
 
 class Uninstall(WindowsHome):

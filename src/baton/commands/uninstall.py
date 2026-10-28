@@ -50,7 +50,8 @@ def run(args) -> int:
         if rc is not None:
             return rc
     else:
-        print("Config and keys are still in ~/.config/baton. `baton uninstall --purge` deletes them.")
+        print("Config and keys are still in %s. `baton uninstall --purge` deletes them."
+              % config_dir())
 
     if not remove:
         return 0

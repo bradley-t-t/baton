@@ -18,6 +18,7 @@ from pathlib import Path
 # where the subprocess module doesn't define them.
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 
 # install.ps1 records the folder it added to the user PATH here, so `baton uninstall
 # --all` takes out that entry and never one the person or another tool added.
@@ -77,11 +78,21 @@ def exclusive_lock(path: Path):
             release()
 
 
-def detached() -> dict:
-    """Popen arguments for a process that outlives this one and has no terminal."""
-    if windows():
-        return {"creationflags": DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP}
-    return {"start_new_session": True}
+def start_detached(command, **popen_args) -> subprocess.Popen:
+    """Start a process that outlives this one, with no terminal and no input or output.
+
+    On Windows it also leaves this process's job, when the job allows that, since some
+    hosts (an SSH session, for one) end every process in their job when they close."""
+    quiet = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL, close_fds=True)
+    if not windows():
+        return subprocess.Popen(command, start_new_session=True, **quiet, **popen_args)
+    flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    try:
+        return subprocess.Popen(command, creationflags=flags | CREATE_BREAKAWAY_FROM_JOB,
+                                **quiet, **popen_args)
+    except OSError:  # the job doesn't allow leaving it
+        return subprocess.Popen(command, creationflags=flags, **quiet, **popen_args)
 
 
 def run_after_exit(commands: list, delay: int = 3) -> None:
@@ -91,9 +102,7 @@ def run_after_exit(commands: list, delay: int = 3) -> None:
     chain = " && ".join(subprocess.list2cmdline(c) for c in commands)
     # ping is the usual way to wait in cmd.exe: one ping a second, the first at once.
     line = "ping -n %d 127.0.0.1 >nul & %s" % (delay + 1, chain)
-    subprocess.Popen('cmd.exe /d /s /c "%s"' % line, stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True,
-                     **detached())
+    start_detached('cmd.exe /d /s /c "%s"' % line)
 
 
 def git_bash() -> str:

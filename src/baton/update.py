@@ -102,10 +102,8 @@ def start_if_due() -> bool:
         if not due():
             return False
         _record(checked_at=time.time(), outcome="checking")
-        subprocess.Popen([sys.executable, "-m", "baton", "update", "--auto"],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, cwd=str(state_dir()), close_fds=True,
-                         **system.detached())
+        system.start_detached([sys.executable, "-m", "baton", "update", "--auto"],
+                              cwd=str(state_dir()))
         return True
     except Exception as e:  # noqa: BLE001
         log("update: couldn't start a check: %s: %s" % (type(e).__name__, e))
