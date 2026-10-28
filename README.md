@@ -12,7 +12,9 @@ On a refusal the request goes to the provider with the last 4 messages and 10 to
 
 `Stop` hands off only when display didn't, which happens when display timed out or never saw the reply. It never blocks, so you don't get "Hook re-prompted Claude" rows.
 
-Only the current turn counts. A turn a classifier stopped, a tool call you turned down, a write Holdback already refused: none of those say anything about the reply being checked now. Questions about Baton itself are left alone, and a reply that failed for a technical reason it names (a missing file, a network error) isn't a refusal.
+When Anthropic's safeguards stop a turn, Claude Code shows "API Error: ... safeguards flagged this message" where the reply would be. That's a refusal too, so your message for that turn goes to the provider and its answer is drawn in place of the error. Claude Code runs `StopFailure` rather than `Stop` on such a turn, so `MessageDisplay` is what delivers it. If Claude Code retries once after the stop and the retry answers, that answer stands.
+
+Only the current turn counts. A safeguards stop earlier in the session, a tool call you turned down, a write Holdback already refused: none of those say anything about the reply being checked now. A turn you interrupted, or one that ended in another API error (overloaded, a rate limit, the network, a login), is left alone. Questions about Baton itself are left alone too, and a reply that failed for a technical reason it names (a missing file, a network error) isn't a refusal.
 
 ## Running commands
 
@@ -79,7 +81,7 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 
 ## Updates
 
-Baton keeps itself up to date. About once a day a hook starts a background check of the version on `main`, and if it's newer, reinstalls with pipx or uv, whichever installed it (on Windows, a few seconds after Baton exits, since Windows won't replace a running program). Hooks never wait on it. `baton update` does it now, `baton update --check` only looks, and `baton doctor` shows the last check.
+Baton keeps itself up to date. As each hook finishes, at most once a minute, it starts a background check of the version on `main` (a conditional request, so an unchanged `main` costs GitHub nothing), and if `main` is newer, reinstalls with pipx or uv, whichever installed it. Hooks never wait on it, and the next hook already runs the new version; on Windows the reinstall starts a few seconds after Baton exits, since Windows won't replace a running program. After a failed check it waits 5 minutes, doubling up to an hour, and no check starts while an update is running. `baton update` does it now, `baton update --check` only looks, and `baton doctor` shows the last check.
 
 ## Config
 

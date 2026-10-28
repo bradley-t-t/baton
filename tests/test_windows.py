@@ -81,6 +81,7 @@ class Hooks(WindowsHome):
 class Updates(WindowsHome):
     def test_background_check_is_detached_without_a_console(self):
         with mock.patch("baton.package.installer", return_value="uv"), \
+                mock.patch("baton.system.exclusive_lock", return_value=contextlib.nullcontext()), \
                 mock.patch("subprocess.Popen") as popen:
             self.assertTrue(update.start_if_due())
         kw = popen.call_args[1]
@@ -89,7 +90,7 @@ class Updates(WindowsHome):
 
     def test_reinstall_waits_for_baton_to_exit(self):
         upgrade = ["C:\\uv.exe", "tool", "install", "--force", "--reinstall", "git+x@main"]
-        with mock.patch("baton.update.latest_version", return_value="99.0.0"), \
+        with mock.patch("baton.update.latest_version", return_value=("99.0.0", "")), \
                 mock.patch("baton.package.upgrade_command", return_value=upgrade), \
                 mock.patch("baton.update.hooks_installed", return_value=True), \
                 mock.patch("baton.system.exclusive_lock", return_value=contextlib.nullcontext()), \

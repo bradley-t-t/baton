@@ -8,7 +8,8 @@ from __future__ import annotations
 import uuid
 
 from . import judge, providers, runner
-from .claude.transcript import blocked_calls, clip, current_turn, interrupted, person_messages, said_no, tool_calls
+from .claude.transcript import (blocked_calls, clip, current_turn, person_messages, said_no, tool_calls,
+                                turn_end)
 from .config import load as load_config, provider_config
 from .detect import about_handoff, admits_block, holdback_held, is_decline, matches_any, skipped_check
 from .providers.base import DEFAULT_SYSTEM
@@ -26,7 +27,8 @@ def enabled(cfg: dict | None = None) -> bool:
 
 def reason(reply: str, entries: list | None = None, user: str = "", cfg: dict | None = None,
            use_judge: bool = True) -> dict | None:
-    """Why to hand this reply off: {"kind": "decline" | "blocked", ...}, or None."""
+    """Why to hand this reply off: {"kind": "decline" | "blocked" | "safeguards", ...},
+    or None."""
     cfg = cfg or load_config()
     entries = entries or []
     reply = reply or ""
@@ -37,11 +39,15 @@ def reason(reply: str, entries: list | None = None, user: str = "", cfg: dict | 
     if about_handoff(user):
         log("no handoff: the message is about the handoff itself")
         return None
-    # Only this turn counts. A classifier stop or a "no" from earlier in the session says
+    # Only this turn counts. A safeguards stop or a "no" from earlier in the session says
     # nothing about the reply being checked now.
     turn = current_turn(entries)
-    if interrupted(turn):
-        log("no handoff: this turn was stopped by a classifier, refusal or API error")
+    end = turn_end(turn, reply)
+    if end == "interrupted":
+        log("no handoff: the person interrupted this turn")
+        return None
+    if end == "error":
+        log("no handoff: this turn ended in an API error")
         return None
     if said_no(turn):
         log("no handoff: the person turned down a tool call this turn")
@@ -53,6 +59,14 @@ def reason(reply: str, entries: list | None = None, user: str = "", cfg: dict | 
         return None
     if matches_any(reply, never) or matches_any(user, never):
         return None
+    if end == "safeguards":
+        # Anthropic's safeguards refused the turn, so Claude never answered. The request
+        # is the person's own message, never the notice Claude Code adds after the stop.
+        if not user:
+            log("no handoff: safeguards stopped this turn, but there is no request to send")
+            return None
+        log("safeguards stopped this turn; handing off the request")
+        return {"kind": "safeguards"}
     if is_decline(reply):
         return {"kind": "decline"}
     blocked = blocked_calls(turn, never)
@@ -110,6 +124,8 @@ def complete(r: dict, reply: str, user: str, cwd: str, entries: list,
     if r.get("kind") == "blocked":
         ctx["blocked"] = [{"tool": b["tool"], "input": b["input"],
                            "error": clip(b["result"] or "", 1500)} for b in r["blocked"]]
+    elif r.get("kind") == "safeguards":
+        ctx["stopped"] = "Anthropic's safeguards blocked Claude's reply, so Claude never answered."
     hid = uuid.uuid4().hex[:12]
     log("sending %s kind=%s provider=%s" % (hid, r["kind"], provider.name))
     note = runner.limits_note(cfg, provider.name)
