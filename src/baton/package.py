@@ -6,6 +6,7 @@ are the same ones, so an update lands exactly where the installer put Baton.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -28,16 +29,19 @@ def installer() -> str:
     return ""
 
 
+def search_path() -> str:
+    """PATH with the usual pipx and uv folders added, since pipx may need uv and git."""
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d]
+    for d in TOOL_DIRS:
+        d = str(Path(d).expanduser())
+        if d not in dirs and Path(d).is_dir():
+            dirs.append(d)
+    return os.pathsep.join(dirs)
+
+
 def tool(name: str) -> str:
     """The path of the pipx or uv program, or ""."""
-    found = shutil.which(name)
-    if found:
-        return found
-    for d in TOOL_DIRS:
-        p = Path(d).expanduser() / name
-        if p.is_file():
-            return str(p)
-    return ""
+    return shutil.which(name, path=search_path()) or ""
 
 
 def source() -> str:

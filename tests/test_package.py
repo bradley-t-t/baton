@@ -25,10 +25,14 @@ class Installer(unittest.TestCase):
     def test_tool_is_found_outside_path(self):
         home = Path(tempfile.mkdtemp())
         (home / ".local" / "bin").mkdir(parents=True)
-        (home / ".local" / "bin" / "uv").write_text("")
-        with mock.patch.dict("os.environ", {"HOME": str(home), "PATH": ""}):
-            self.assertEqual(package.tool("uv"), str(home / ".local" / "bin" / "uv"))
+        uv = home / ".local" / "bin" / "uv"
+        uv.write_text("")
+        uv.chmod(0o755)
+        with mock.patch.dict("os.environ", {"HOME": str(home), "PATH": "/nowhere"}), \
+                mock.patch("baton.package.TOOL_DIRS", ("~/.local/bin",)):
+            self.assertEqual(package.tool("uv"), str(uv))
             self.assertEqual(package.tool("pipx"), "")
+            self.assertEqual(package.search_path(), "/nowhere:" + str(uv.parent))
 
 
 class Upgrade(unittest.TestCase):

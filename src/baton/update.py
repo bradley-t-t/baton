@@ -131,9 +131,11 @@ def hooks_installed() -> bool:
 
 
 def _clean_env() -> dict:
-    """The environment for pipx, uv and the new copy, without the hook's PYTHONPATH,
-    which points at the old package folder."""
-    return {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    """The environment for pipx, uv and the new copy: without the hook's PYTHONPATH,
+    which points at the old package folder, and with the usual tool folders on PATH."""
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env["PATH"] = package.search_path()
+    return env
 
 
 def _run(cmd: list, timeout: float) -> None:
