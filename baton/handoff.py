@@ -19,7 +19,10 @@ def enabled(cfg: dict = None) -> bool:
     cfg = cfg or load_config()
     if os.environ.get("BATON_JUDGE_ACTIVE") or os.environ.get("CLAUDE_HANDOFF_JUDGE_ACTIVE"):
         return False
-    return bool(cfg.get("enabled", True))
+    if not cfg.get("enabled", True):
+        return False
+    # Nothing is ever sent until a provider is chosen (`baton setup` or "provider").
+    return provider_config(cfg) is not None
 
 
 def asked(user: str = None, entries=None) -> str:

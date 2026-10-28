@@ -3,17 +3,24 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "baton"
-version = "0.1.0"
-description = "When Claude Code turns down a request, ask another AI and bring its answer back"
+# "baton" is taken on PyPI, so the distribution is claude-baton. The command and the
+# import name are both baton.
+name = "claude-baton"
+dynamic = ["version"]
+description = "A Claude Code hook that adds answers from a second model you configure"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Trenton Taylor" }]
-keywords = ["claude", "claude-code", "handoff", "xai", "grok", "openai", "ollama"]
+keywords = ["claude", "claude-code", "hooks", "xai", "grok", "openai", "anthropic", "ollama"]
 classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -22,11 +29,19 @@ classifiers = [
 ]
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/bradley-t-t/baton"
+Source = "https://github.com/bradley-t-t/baton"
+Issues = "https://github.com/bradley-t-t/baton/issues"
+
 [project.scripts]
 baton = "baton.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "baton.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["baton*", "claude_handoff*"]
 
 [tool.setuptools.package-data]
-baton = ["check-step.md"]
+baton = ["check-step.md", "config.example.json"]

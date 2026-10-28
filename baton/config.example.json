@@ -1,8 +1,7 @@
 {
   "enabled": true,
-  "provider": "xai",
+  "provider": "",
   "timeout_seconds": 300,
-  "deliver": "block",
   "providers": {
     "xai": {
       "type": "xai",
@@ -35,7 +34,9 @@
       "type": "github_issue",
       "repo": "OWNER/REPO",
       "assignee": "",
-      "labels": ["handoff"],
+      "labels": [
+        "handoff"
+      ],
       "api_key_env": "GITHUB_TOKEN",
       "timeout_seconds": 540,
       "poll_seconds": 10
@@ -48,10 +49,10 @@
     "timeout_seconds": 45
   },
   "run_actions": {
-    "enabled": true,
+    "enabled": false,
     "timeout_seconds": 60,
     "max_commands": 20,
-    "allow": ["rm", "ls", "cat", "echo", "printf", "mkdir", "touch", "mv", "cp", "chmod", "pwd", "head", "tail", "wc", "stat", "test", "true", "false", "python3", "python", "bash", "sh"]
+    "allow": []
   },
   "never_handoff_patterns": [],
   "context": {

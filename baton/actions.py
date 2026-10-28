@@ -136,6 +136,10 @@ def allowlist(cfg: dict, provider_name: str) -> set:
 LEADING = {"do", "then", "else", "elif", "if", "while", "until", "{", "}", "!", "time",
            "done", "fi", "esac"}
 BACKTICK = re.compile(r"`([^`]*)`")
+# fd duplication (2>&1, >&2, <&0, 2>&-) and &> / &>> redirects. Their & is not a
+# command separator, so it is taken out before splitting.
+FD_DUP = re.compile(r"(\d*)([<>])&(\d+|-)")
+BOTH_REDIRECT = re.compile(r"&(>>?)")
 
 
 def simple_commands(line: str) -> list:
@@ -151,6 +155,7 @@ def simple_commands(line: str) -> list:
     for inner in BACKTICK.findall(line):
         out.extend(simple_commands(inner))
     line = BACKTICK.sub(" x ", line)
+    line = BOTH_REDIRECT.sub(r" \1", FD_DUP.sub(" ", line))
     try:
         lex = shlex.shlex(line, posix=True, punctuation_chars=";&|()")
         lex.whitespace_split = True
@@ -173,6 +178,23 @@ def simple_commands(line: str) -> list:
             seg.append(tok)
     flush()
     return out
+
+
+def writes_file(line: str) -> bool:
+    """Whether a line redirects output into a file (anything but /dev/null or an fd)."""
+    try:
+        lex = shlex.shlex(line, posix=True, punctuation_chars=";&|()<>")
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        return ">" in line
+    for i, tok in enumerate(toks):
+        if tok and set(tok) <= set("<>&|") and ">" in tok:
+            nxt = toks[i + 1] if i + 1 < len(toks) else ""
+            if nxt == "/dev/null" or (tok.endswith("&") and nxt.isdigit()):
+                continue
+            return True
+    return False
 
 
 def script_commands(body: str) -> list:
@@ -383,11 +405,24 @@ def limits_note(cfg: dict, provider_name: str) -> str:
     allow = allowlist(cfg, provider_name)
     if not ra.get("enabled") or not allow:
         return ""
+    extra = (" Writing to files with > or >> is not allowed." if ra.get("read_only") else "")
     return ("Runner limits: the block may have at most %d commands, counting each "
             "command in a chain, pipe or loop body, and each command has to be one of: %s. A block over "
             "the limit or with any other command is not run at all. When the same "
-            "command repeats, use one for-loop instead of a line per item."
-            % (max_commands(cfg), ", ".join(sorted(allow))))
+            "command repeats, use one for-loop instead of a line per item.%s"
+            % (max_commands(cfg), ", ".join(sorted(allow)), extra))
+
+
+def script_env(cfg: dict) -> dict:
+    """This environment minus API keys, so a script can't read or print them."""
+    from . import keys
+    hidden = set(keys.read())
+    for p in (cfg.get("providers") or {}).values():
+        if isinstance(p, dict) and p.get("api_key_env"):
+            hidden.add(p["api_key_env"])
+    hidden.update(("XAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN",
+                   "BATON_TOKEN", "CLAUDE_HANDOFF_TOKEN"))
+    return {k: v for k, v in os.environ.items() if k not in hidden}
 
 
 def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict:
@@ -434,6 +469,11 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
         log("run_actions rejected: %s" % rejected[0][:80])
         return {"ran": True, "ok": False, "commands": [], "results": [],
                 "summary": msg, "log": msg, "not_run": "not_allowed"}
+    if ra.get("read_only") and any(writes_file(line) for line in _logical_lines(body)):
+        msg = "Nothing was run: read-only mode doesn't allow writing to files."
+        log("run_actions rejected: file redirect in read-only mode")
+        return {"ran": True, "ok": False, "commands": [], "results": [],
+                "summary": msg, "log": msg, "not_run": "not_allowed"}
     allowed_cmds = all_cmds
     # Run the fence body verbatim so quotes, loops, and python -c stay intact.
     script = body if body.endswith("\n") else body + "\n"
@@ -456,7 +496,7 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
         p = subprocess.run(
             ["bash", path],
             capture_output=True, text=True, timeout=timeout, cwd=workdir,
-            env={**os.environ},
+            env=script_env(cfg),
         )
         rec = {"cmd": "(script %d cmds)" % len(allowed_cmds), "exit": p.returncode,
                "stdout": p.stdout or "", "stderr": p.stderr or ""}

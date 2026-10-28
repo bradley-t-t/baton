@@ -14,9 +14,8 @@ from pathlib import Path
 
 DEFAULTS = {
     "enabled": True,
-    "provider": "xai",
+    "provider": "",
     "timeout_seconds": 300,
-    "deliver": "block",
     "providers": {
         "xai": {"type": "xai", "model": "grok-4", "api_key_env": "XAI_API_KEY"},
         "openai": {"type": "openai", "model": "gpt-5", "api_key_env": "OPENAI_API_KEY"},
