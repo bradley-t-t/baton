@@ -81,21 +81,3 @@ def brief(context: dict) -> str:
     """The session context as a message for the provider."""
     return ("Context from the declined session (JSON):\n"
             + json.dumps(context, indent=2, default=str)[:CONTEXT_CHARS])
-
-
-# Friendly attribution tags for the short trailing line.
-DISPLAY_NAMES = {
-    "xai": "Grok",
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "local": "local",
-    "lmstudio": "LM Studio",
-    "queue": "GitHub",
-    "github_issue": "GitHub",
-}
-
-
-def display_name(provider_name: str) -> str:
-    if not provider_name:
-        return "handoff"
-    return DISPLAY_NAMES.get(provider_name, provider_name)
