@@ -55,7 +55,7 @@ def _config_file(add) -> None:
         add(FAIL, "Config", "%s doesn't exist. Run `baton setup`." % path)
         return
     try:
-        json.loads(path.read_text())
+        json.loads(path.read_text(encoding="utf-8"))
         add(OK, "Config", str(path))
     except ValueError as e:
         add(FAIL, "Config", "%s isn't valid JSON: %s" % (path, e))
@@ -145,7 +145,7 @@ def _updates(add) -> None:
     title = "Version %s" % __version__ + (", latest %s" % latest if latest else "")
     if not package.upgrade_command():
         add(WARN, title, "This copy wasn't installed with pipx or uv, so it can't update "
-            "itself. Reinstall with: curl -fsSL https://taylorurl.com/baton | sh")
+            "itself. Reinstall with: " + package.install_command())
         return
     if not last.get("checked_at"):
         add(OK, title, "Not checked for updates yet")
@@ -157,15 +157,16 @@ def _updates(add) -> None:
 
 
 def _command_problems(cmd: str) -> list:
-    """The Python and package folder a hook command points at must still exist."""
-    m = re.search(r'PYTHONPATH="([^"]+)"\s+"([^"]+)"', cmd)
+    """The Python and package folder a hook command points at must still exist. A
+    Windows hook names only its Python."""
+    m = re.search(r'PYTHONPATH="([^"]+)"\s+"([^"]+)"', cmd) or re.match(r'"([^"]+)" -m ', cmd)
     if not m:
         return []
-    root, py = Path(m.group(1)), m.group(2)
+    root, py = (Path(m.group(1)), m.group(2)) if m.lastindex == 2 else (None, m.group(1))
     problems = []
     if not Path(py).exists():
         problems.append("Python %s is gone; run `baton install` again" % py)
-    if not (root / "baton").is_dir() and not (root / "claude_handoff").is_dir():
+    if root and not (root / "baton").is_dir() and not (root / "claude_handoff").is_dir():
         problems.append("package folder %s is gone; run `baton install` again"
                         % shlex.quote(str(root)))
     return problems

@@ -1,4 +1,5 @@
-"""Configuration: ~/.config/baton/config.json, with environment overrides.
+"""Configuration: ~/.config/baton/config.json (%APPDATA%\\baton on Windows), with
+environment overrides.
 
 Baton was called claude-handoff. The old names still work: a CLAUDE_HANDOFF_* variable is
 read when its BATON_* twin isn't set, and ~/.config/claude-handoff/ is used when
@@ -12,6 +13,8 @@ import json
 import os
 import shutil
 from pathlib import Path
+
+from . import system
 
 DEFAULTS = {
     "enabled": True,
@@ -47,7 +50,7 @@ def env(name: str = "", default=None):
 
 
 def config_home() -> Path:
-    return Path(os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config"))
+    return system.config_home()
 
 
 def config_dir() -> Path:
@@ -78,8 +81,7 @@ def state_dir() -> Path:
     p = env("STATE")
     if p:
         return Path(os.path.expanduser(p))
-    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    return Path(base) / "baton"
+    return system.state_home() / "baton"
 
 
 def _merge(base: dict, over: dict) -> dict:
@@ -99,7 +101,7 @@ def _bool(v: str) -> bool:
 def load(path: Path | None = None) -> dict:
     path = path or config_path()
     try:
-        user = json.loads(path.read_text())
+        user = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(user, dict):
             user = {}
     except (OSError, ValueError):
@@ -181,10 +183,10 @@ def migrate_old_files() -> list:
 
 def _raise_old_cap(path: Path) -> None:
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
     ra = data.get("run_actions") if isinstance(data, dict) else None
     if isinstance(ra, dict) and ra.get("max_commands") == OLD_MAX_COMMANDS:
         ra["max_commands"] = DEFAULTS["run_actions"]["max_commands"]
-        path.write_text(json.dumps(data, indent=2) + "\n")
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

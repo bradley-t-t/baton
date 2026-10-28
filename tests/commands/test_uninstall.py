@@ -55,7 +55,7 @@ class UninstallAll(Home):
     def setUp(self):
         super().setUp()
         self.cli("setup", "--provider", "local", "--yes", "--no-test")
-        self.remove = mock.patch("baton.commands.uninstall.removal_command",
+        self.remove = mock.patch("baton.package.removal_command",
                                  return_value=["pipx", "uninstall", "claude-baton"])
         self.remove.start()
 

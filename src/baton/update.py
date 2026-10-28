@@ -6,12 +6,14 @@ Hooks call start_if_due() as they finish. At most once a day it starts
 prints to Claude Code. The check time is recorded before the process starts, so a
 failing update waits a day instead of retrying on every hook. A lock
 file keeps two updates from running at once. Outcomes go to handoff.log and update.json
-in ~/.local/state/baton.
+in ~/.local/state/baton (%LOCALAPPDATA%\\baton on Windows).
+
+Windows keeps a running program's files locked, so there the reinstall starts once
+this process has exited, and the outcome says it was started rather than finished.
 """
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -21,7 +23,7 @@ import time
 import urllib.request
 from contextlib import contextmanager
 
-from . import __version__, package
+from . import __version__, package, system
 from .claude import settings
 from .config import state_dir
 from .state import log
@@ -68,7 +70,7 @@ def latest_version(timeout: float = CHECK_TIMEOUT) -> str:
 def last() -> dict:
     """What the last check recorded: checked_at, latest, outcome."""
     try:
-        data = json.loads((state_dir() / STATE_FILE).read_text())
+        data = json.loads((state_dir() / STATE_FILE).read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -78,7 +80,7 @@ def _record(**fields) -> None:
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / (STATE_FILE + ".tmp")
-    tmp.write_text(json.dumps(dict(last(), **fields), indent=2))
+    tmp.write_text(json.dumps(dict(last(), **fields), indent=2), encoding="utf-8")
     os.replace(tmp, d / STATE_FILE)
 
 
@@ -102,8 +104,8 @@ def start_if_due() -> bool:
         _record(checked_at=time.time(), outcome="checking")
         subprocess.Popen([sys.executable, "-m", "baton", "update", "--auto"],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, cwd=str(state_dir()),
-                         start_new_session=True, close_fds=True)
+                         stderr=subprocess.DEVNULL, cwd=str(state_dir()), close_fds=True,
+                         **system.detached())
         return True
     except Exception as e:  # noqa: BLE001
         log("update: couldn't start a check: %s: %s" % (type(e).__name__, e))
@@ -114,15 +116,11 @@ def start_if_due() -> bool:
 def _lock():
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
-    with open(d / LOCK_FILE, "w") as f:
-        try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            raise Busy("another update is running") from None
-        try:
+    try:
+        with system.exclusive_lock(d / LOCK_FILE):
             yield
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+    except system.Locked:
+        raise Busy("another update is running") from None
 
 
 def hooks_installed() -> bool:
@@ -169,12 +167,18 @@ def update(check_only: bool = False) -> dict:
                 if not cmd:
                     raise RuntimeError("Baton wasn't installed with pipx or uv, or that tool "
                                        "is missing")
-                _run(cmd, UPGRADE_TIMEOUT)
-                if hooks_installed():
-                    # The new copy re-registers its hooks in case their command changed
-                    # (a new Python, say). settings.json is only rewritten if it did.
-                    _run([sys.executable, "-m", "baton", "install"], 60)
-                result.update(outcome="updated %s -> %s" % (__version__, latest), upgraded=True)
+                # The new copy re-registers its hooks in case their command changed (a
+                # new Python, say). settings.json is only rewritten if it did.
+                steps = [cmd] + ([[sys.executable, "-m", "baton", "install"]]
+                                 if hooks_installed() else [])
+                if system.windows():
+                    system.run_after_exit(steps)
+                    outcome = "updating %s -> %s once Baton exits" % (__version__, latest)
+                else:
+                    for step, timeout in zip(steps, (UPGRADE_TIMEOUT, 60)):
+                        _run(step, timeout)
+                    outcome = "updated %s -> %s" % (__version__, latest)
+                result.update(outcome=outcome, upgraded=True)
         except Exception as e:  # noqa: BLE001
             record("failed: %s: %s" % (type(e).__name__, e))
             raise

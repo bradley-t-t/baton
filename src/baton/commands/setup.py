@@ -16,7 +16,7 @@ import os
 import sys
 from pathlib import Path
 
-from .. import keys, models, ui
+from .. import keys, models, system, ui
 from ..claude import settings
 from ..config import config_dir, config_path, env, example_config_path, migrate_old_files
 from ..providers import ping
@@ -81,12 +81,12 @@ def _load_raw() -> dict:
     """The config file as written (no defaults merged), or the example."""
     path = config_path()
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             return data
     except (OSError, ValueError):
         pass
-    return json.loads(example_config_path().read_text())
+    return json.loads(example_config_path().read_text(encoding="utf-8"))
 
 
 def _target_config() -> Path:
@@ -189,7 +189,7 @@ def _run(args) -> int:
 
     cfg_file.parent.mkdir(parents=True, exist_ok=True)
     tmp = cfg_file.with_name(cfg_file.name + ".tmp")
-    tmp.write_text(json.dumps(new_raw, indent=2) + "\n")
+    tmp.write_text(json.dumps(new_raw, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, cfg_file)
     if key and key_env:
         keys.write(key_env, key)
@@ -315,6 +315,7 @@ def _review(spec: dict, name: str, pcfg: dict, resolved: str, ra: dict, mode: st
                               "custom": "custom (%s)" % allow}[mode])
     ui.say("Config:    %s" % cfg_file)
     if key_env:
-        ui.say("API key:   %s in %s (mode 600)" % (key_env, keys.secrets_path()))
+        mode = "" if system.windows() else " (mode 600)"
+        ui.say("API key:   %s in %s%s" % (key_env, keys.secrets_path(), mode))
     ui.say("Hooks:     %s" % settings_file)
     ui.say(ui.dim("Any older Baton or claude-handoff entries are replaced. Other hooks are kept."))
