@@ -16,7 +16,7 @@ from .config import config_path, ensure_file, load, migrate_old_files, provider_
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="baton",
-        description="A Claude Code hook that adds answers from a second model you configure.")
+        description="When Claude Code turns down a request, ask another AI and bring its answer back.")
     p.add_argument("--version", action="version", version="baton " + __version__)
     sub = p.add_subparsers(dest="cmd")
 
