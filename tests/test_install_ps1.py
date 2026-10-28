@@ -70,19 +70,6 @@ $b = Add-BinToPath 'C:\Users\t\.local\bin' 6>$null
         r = self.run_ps("@{u=(Get-SourceUrl)} | ConvertTo-Json -Compress", BATON_REF="dev")
         self.assertTrue(r["u"].endswith("baton.git@dev") or r["u"].endswith("/archive/dev.tar.gz"))
 
-    def test_remove_old_follows_the_config(self):
-        d = Path(tempfile.mkdtemp())
-        cfg = d / "config.json"
-        out = {}
-        for value in ({"install": {"remove_old": False}}, {"install": {}}, None):
-            if value is None:
-                cfg.write_text("not json")
-            else:
-                cfg.write_text(json.dumps(value))
-            out[str(value)] = self.run_ps("@{w=(Test-RemoveOldWanted)} | ConvertTo-Json -Compress",
-                                          BATON_CONFIG=str(cfg))["w"]
-        self.assertEqual(list(out.values()), [False, True, True])
-
     def test_program_arguments_keep_their_spaces(self):
         r = self.run_ps(r'''
 $code = Invoke-Interactive $env:PYTHON @('-c', 'import sys; sys.exit(0 if sys.argv[1:] == ["a b", "", "c\"d"] else 3)', 'a b', '', 'c"d')

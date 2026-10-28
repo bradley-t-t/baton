@@ -20,10 +20,9 @@ from pathlib import Path
 
 from .. import keys, system
 
-# Strings that mark our own entries in the hooks lists. Baton used to be called
-# claude-handoff, so entries from an old install count as ours too: install replaces
-# them instead of running both, and uninstall removes them.
-MARKERS = ("-m baton.hooks", "-m claude_handoff.hooks")
+# The string that marks our own entries in the hooks lists, so install replaces them
+# instead of running both, and uninstall removes them.
+MARKER = "-m baton.hooks"
 
 EVENTS = ("UserPromptSubmit", "Stop", "MessageDisplay")
 HOOK_NAMES = {"UserPromptSubmit": "prompt", "Stop": "stop", "MessageDisplay": "display"}
@@ -52,10 +51,9 @@ def hook_command(event: str) -> str:
     reinstalling Baton is skipped instead of flagged as an error."""
     run = 'PYTHONPATH="%s" "%s" -m baton.hooks %s || true' % (
         package_root(), sys.executable or "python3", HOOK_NAMES.get(event, "stop"))
-    new, old = str(keys.secrets_path()), str(keys.old_secrets_path())
-    return ('if [ -f "%s" ]; then set -a; . "%s"; set +a; '
-            'elif [ -f "%s" ]; then set -a; . "%s"; set +a; fi; %s'
-            % (new, new, old, old, run))
+    secrets = str(keys.secrets_path())
+    return ('if [ -f "%s" ]; then set -a; . "%s"; set +a; fi; %s'
+            % (secrets, secrets, run))
 
 
 def hook_args(event: str) -> list:
@@ -74,7 +72,7 @@ def hook_entry(event: str) -> dict:
 
 
 def has_marker(cmd) -> bool:
-    return any(m in (cmd or "") for m in MARKERS)
+    return MARKER in (cmd or "")
 
 
 def command_text(h: dict) -> str:
@@ -87,7 +85,7 @@ def command_text(h: dict) -> str:
 
 
 def is_ours(entry) -> bool:
-    """True for a hooks-list entry that runs Baton (or claude-handoff)."""
+    """True for a hooks-list entry that runs Baton."""
     if not isinstance(entry, dict):
         return False
     for h in entry.get("hooks") or []:
@@ -137,7 +135,7 @@ def _write(path: Path, data: dict) -> None:
 
 
 def install(path: Path | None = None) -> Path:
-    """Add our hooks, replacing any earlier Baton or claude-handoff ones. The file is
+    """Add our hooks, replacing any earlier Baton ones. The file is
     left alone when they're already there as they'd be written."""
     path = path or settings_path()
     data = read(path)

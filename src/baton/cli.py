@@ -10,7 +10,7 @@ import sys
 from . import __version__, keys, providers
 from .claude import settings
 from .commands import doctor, setup, uninstall, update
-from .config import config_path, ensure_file, load, migrate_old_files, provider_config
+from .config import config_path, ensure_file, load, provider_config
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,8 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("doctor", help="Check the config, key and hooks")
     d.add_argument("--online", action="store_true", help="Also send a test prompt")
     d.add_argument("--settings", help="Claude Code settings file")
-    update.add_arguments(sub.add_parser(
-        "update", help="Install the newest Baton now"))
+    sub.add_parser("update", help="Reinstall Baton from main")
     i = sub.add_parser("install", help="Add hooks to ~/.claude/settings.json")
     i.add_argument("--settings", help="Claude Code settings file")
     u = sub.add_parser("uninstall", help="Remove Baton's hooks from ~/.claude/settings.json")
@@ -66,11 +65,8 @@ def main(argv: list | None = None) -> int:
 
 
 def _install(args) -> int:
-    moved = migrate_old_files()
     path = settings.install()
     ensure_file()
-    for m in moved:
-        print("Copied %s from ~/.config/claude-handoff/" % m)
     print("Installed hooks into %s" % path)
     print(json.dumps(settings.status(path), indent=2))
     if provider_config(load()) is None:

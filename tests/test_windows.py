@@ -1,5 +1,5 @@
 """Windows, simulated: baton.system.windows() is patched to True, so every place that
-differs (paths, hooks, background processes, updates, uninstall, the script shell) takes
+differs (paths, hooks, background processes, uninstall, the script shell) takes
 its Windows branch here. Real Windows runs are in the PR notes."""
 import contextlib
 import os
@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from baton import keys, runner, system, update
+from baton import keys, runner, system
 from baton.claude import settings
 from baton.commands import doctor
 from baton.config import config_dir, state_dir
@@ -72,39 +72,12 @@ class Hooks(WindowsHome):
         keys.write("XAI_API_KEY", "from-file")
         os.environ.pop("XAI_API_KEY", None)
         from baton import hooks
-        with mock.patch.dict(hooks.HOOKS, {"stop": lambda: os.environ.get("XAI_API_KEY") == "from-file"}), \
-                mock.patch("baton.update.start_if_due"):
+        with mock.patch.dict(hooks.HOOKS, {"stop": lambda: os.environ.get("XAI_API_KEY") == "from-file"}):
             self.assertTrue(hooks.main(["stop"]))
         os.environ.pop("XAI_API_KEY", None)
 
 
-class Updates(WindowsHome):
-    def test_background_check_is_detached_without_a_console(self):
-        with mock.patch("baton.package.installer", return_value="uv"), \
-                mock.patch("baton.system.exclusive_lock", return_value=contextlib.nullcontext()), \
-                mock.patch("subprocess.Popen") as popen:
-            self.assertTrue(update.start_if_due())
-        kw = popen.call_args[1]
-        self.assertEqual(kw["creationflags"], 0x1000208)
-        self.assertNotIn("start_new_session", kw)
-
-    def test_reinstall_waits_for_baton_to_exit(self):
-        upgrade = ["C:\\uv.exe", "tool", "install", "--force", "--reinstall", "git+x@main"]
-        with mock.patch("baton.update.latest_version", return_value=("99.0.0", "")), \
-                mock.patch("baton.package.upgrade_command", return_value=upgrade), \
-                mock.patch("baton.update.hooks_installed", return_value=True), \
-                mock.patch("baton.system.exclusive_lock", return_value=contextlib.nullcontext()), \
-                mock.patch("baton.system.run_after_exit") as later, \
-                mock.patch("subprocess.run") as run:
-            r = update.update()
-        run.assert_not_called()
-        steps = later.call_args[0][0]
-        self.assertEqual(steps[0], upgrade)
-        self.assertEqual(steps[1][1:], ["-m", "baton", "install"])
-        self.assertEqual(steps[2][1:], ["-m", "baton", "update", "--check"])
-        self.assertTrue(r["upgraded"])
-        self.assertIn("once Baton exits", update.last()["outcome"])
-
+class Detached(WindowsHome):
     def test_run_after_exit_waits_then_chains(self):
         with mock.patch("subprocess.Popen") as popen:
             system.run_after_exit([["C:\\Program Files\\uv.exe", "tool", "x"], ["b"]])
@@ -233,18 +206,6 @@ class ScriptShell(unittest.TestCase):
             r = runner.run_reply(text, cfg, "xai", cwd=work)
         self.assertTrue(r["ok"], r)
         self.assertEqual(Path(work, "made.txt").read_text().strip(), "hi")
-
-
-class Lock(unittest.TestCase):
-    def test_second_holder_is_turned_away(self):
-        import tempfile
-        path = Path(tempfile.mkdtemp()) / "x.lock"
-        with system.exclusive_lock(path):
-            with self.assertRaises(system.Locked):
-                with system.exclusive_lock(path):
-                    pass
-        with system.exclusive_lock(path):
-            pass
 
 
 if __name__ == "__main__":

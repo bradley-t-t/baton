@@ -31,10 +31,10 @@ class Run(unittest.TestCase):
         f.write_text("bye")
         cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "max_commands": 5,
                                "allow": ALLOW}}
-        out = run_reply("```bash\nrm %s\n```" % f, cfg, "xai", cwd=td)
+        out = run_reply("Deleted it.\n```bash\nrm %s\n```" % f, cfg, "xai", cwd=td)
         self.assertTrue(out["ok"] and out["ran"])
         self.assertFalse(f.exists())
-        self.assertIn("Deleted", out["summary"])
+        self.assertEqual(out["summary"], "Deleted it.")
 
 
     def test_python_c_quotes_not_mangled(self):
@@ -66,7 +66,7 @@ class Run(unittest.TestCase):
             f = Path(td) / ("ch-test-%d.txt" % i)
             self.assertTrue(f.exists())
             self.assertEqual(f.read_text().strip(), w)
-        self.assertIn("Created", out["summary"])
+        self.assertEqual(out["summary"], "Done.")
 
     def test_for_loop_fence_runs_verbatim(self):
         td = tempfile.mkdtemp()
@@ -92,63 +92,44 @@ class Run(unittest.TestCase):
 
 
 @posix_only
-class CleanResult(unittest.TestCase):
-    """The shown result is plain sentences about effects, never command text."""
+class ShownResult(unittest.TestCase):
+    """What the person sees: the script's own output, else the provider's sentence."""
 
-    # grep is added because the live Grok command below pipes into it, and every
-    # command in a chain has to be on the allow list.
     CFG = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
                            "allow": ALLOW + ["grep"]}}
 
-    def test_trash_chain_reads_clean(self):
-        td = tempfile.mkdtemp()
-        trash = Path(td) / ".Trash"
-        trash.mkdir()
-        f = trash / "baton-live-test-71737.txt"
-        f.write_text("x")
-        fence = ("```bash\nrm -f %s && ls %s | grep baton-live-test-71737 "
-                 "|| echo permanently deleted\n```" % (f, trash))
-        out = run_reply("Done.\n" + fence, self.CFG, "xai", cwd=td)
-        self.assertTrue(out["ok"], out["summary"])
-        self.assertFalse(f.exists())
-        self.assertEqual(out["summary"],
-                         "Permanently deleted baton-live-test-71737.txt (it was in the Trash).")
-
-    def test_plain_delete_names_path(self):
+    def test_what_the_script_printed_is_the_result(self):
         td = tempfile.mkdtemp()
         f = Path(td) / "a.txt"
         f.write_text("x")
-        out = run_reply("```bash\nrm -f %s; ls %s\n```" % (f, td), self.CFG, "xai", cwd=td)
+        fence = "```bash\nrm -f %s && echo permanently deleted\n```" % f
+        out = run_reply("Sure.\n" + fence, self.CFG, "xai", cwd=td)
+        self.assertTrue(out["ok"], out["summary"])
+        self.assertFalse(f.exists())
+        self.assertEqual(out["summary"], "permanently deleted")
+
+    def test_a_silent_script_falls_back_to_the_prose(self):
+        td = tempfile.mkdtemp()
+        f = Path(td) / "a.txt"
+        f.write_text("x")
+        out = run_reply("Deleted %s.\n```bash\nrm -f %s\n```" % (f, f),
+                        self.CFG, "xai", cwd=td)
         self.assertEqual(out["summary"], "Deleted %s." % f)
 
-    def test_still_exists_is_failure(self):
+    def test_a_silent_script_with_no_prose_says_done(self):
         td = tempfile.mkdtemp()
-        d = Path(td) / "keep"
-        d.mkdir()
-        (d / "x").write_text("x")
-        # rm without -r on a dir fails, but `|| true` hides the exit code
-        out = run_reply("```bash\nrm %s 2>/dev/null || true\n```" % d, self.CFG, "xai", cwd=td)
-        self.assertFalse(out["ok"])
-        self.assertEqual(out["summary"], "Couldn't delete %s; it's still there." % d)
+        out = run_reply("```bash\ntouch %s/a.txt\n```" % td, self.CFG, "xai", cwd=td)
+        self.assertEqual(out["summary"], "Done.")
 
-    def test_failure_has_no_command_text(self):
+    def test_a_failing_script_has_no_command_text(self):
         td = tempfile.mkdtemp()
-        out = run_reply("```bash\nrm %s/missing.txt && echo gone\n```" % td, self.CFG, "xai", cwd=td)
+        out = run_reply("```bash\nrm %s/missing.txt && echo gone\n```" % td,
+                        self.CFG, "xai", cwd=td)
         self.assertFalse(out["ok"])
         self.assertTrue(out["summary"].startswith("It failed: "), out["summary"])
         self.assertNotIn("&&", out["summary"])
         self.assertNotIn("echo", out["summary"])
         self.assertEqual(out["summary"].count("\n"), 0)
-
-    def test_already_gone_is_not_a_delete(self):
-        td = tempfile.mkdtemp()
-        trash = Path(td) / ".Trash"
-        trash.mkdir()
-        f = trash / "gone.txt"
-        fence = "```bash\nrm %s && ls %s | grep gone || echo permanently deleted.\n```" % (f, trash)
-        out = run_reply(fence, self.CFG, "xai", cwd=td)
-        self.assertFalse(out["ok"])
-        self.assertEqual(out["summary"], "Nothing to delete: %s was already gone." % f)
 
 
 @posix_only
@@ -160,7 +141,7 @@ class Cap(unittest.TestCase):
         out = run_reply(eight(self.td), run_actions(), "xai", cwd=self.td)
         self.assertTrue(out["ran"] and out["ok"], out["summary"])
         self.assertEqual(len(list(Path(self.td).glob("f*.txt"))), 8)
-        self.assertIn("Created 8 files", out["summary"])
+        self.assertEqual(out["summary"], "Done.")
 
     def test_over_cap_runs_nothing_and_says_so_plainly(self):
         out = run_reply(eight(self.td), run_actions(cap=5), "xai", cwd=self.td)

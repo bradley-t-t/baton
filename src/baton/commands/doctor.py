@@ -10,9 +10,9 @@ import sys
 import time
 from pathlib import Path
 
-from .. import __version__, keys, models, package, providers, ui, update
+from .. import __version__, keys, models, package, providers, ui
 from ..claude import settings
-from ..config import config_path, load, old_config_dir, provider_config
+from ..config import config_path, load, provider_config
 from ..runner import allows_all
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -59,10 +59,6 @@ def _config_file(add) -> None:
         add(OK, "Config", str(path))
     except ValueError as e:
         add(FAIL, "Config", "%s isn't valid JSON: %s" % (path, e))
-    if old_config_dir() in path.parents:
-        add(WARN, "Config location", "Still using ~/.config/claude-handoff. "
-            "Run `baton install` or `baton setup` to copy it to ~/.config/baton.")
-
 
 def _provider(add, pcfg: dict | None) -> str:
     """Check the provider and its key. Returns the key's variable name."""
@@ -133,31 +129,17 @@ def _hooks(add) -> None:
         if len(ours) > 1:
             add(WARN, title, "%d Baton entries; `baton install` keeps one" % len(ours))
         problems = _command_problems(ours[0])
-        if "claude_handoff.hooks" in ours[0]:
-            problems.append("old claude-handoff entry; run `baton install`")
         add(WARN if problems else OK, title, "; ".join(problems) or "installed")
 
 
 def _updates(add) -> None:
-    """This version, the newest seen on main, and how the last check went."""
-    last = update.last()
-    latest = last.get("latest") or ""
-    title = "Version %s" % __version__ + (", latest %s" % latest if latest else "")
+    """This version, and whether this copy can update itself."""
+    title = "Version %s" % __version__
     if not package.upgrade_command():
         add(WARN, title, "This copy wasn't installed with pipx or uv, so it can't update "
             "itself. Reinstall with: " + package.install_command())
         return
-    if not last.get("checked_at"):
-        add(OK, title, "Not checked for updates yet; hooks check at most once a minute")
-        return
-    checked = float(last["checked_at"])
-    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(checked))
-    outcome = last.get("outcome") or "checking"
-    detail = "Last update check %s: %s" % (when, outcome)
-    if outcome.startswith("failed"):
-        detail += "; next try after %s" % time.strftime(
-            "%H:%M", time.localtime(checked + update.wait(last)))
-    add(WARN if outcome.startswith("failed") else OK, title, detail)
+    add(OK, title, "`baton update` reinstalls from " + package.BRANCH)
 
 
 def _command_problems(cmd: str) -> list:
@@ -170,7 +152,7 @@ def _command_problems(cmd: str) -> list:
     problems = []
     if not Path(py).exists():
         problems.append("Python %s is gone; run `baton install` again" % py)
-    if root and not (root / "baton").is_dir() and not (root / "claude_handoff").is_dir():
+    if root and not (root / "baton").is_dir():
         problems.append("package folder %s is gone; run `baton install` again"
                         % shlex.quote(str(root)))
     return problems

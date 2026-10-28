@@ -5,7 +5,8 @@ from unittest import mock
 from baton.hooks import display
 from baton.hooks.display import HIDDEN
 from baton.state import clear_displayed, get_displayed, mark_displayed, remember_request
-from tests.helpers import DECLINES, HOLDBACK_REPLY, FakeProvider, handoff_cfg, run_hook, shown
+from tests.helpers import (DECLINES, HOLDBACK_REPLY, FakeProvider, handoff_cfg, judge_says,
+                          run_hook, shown)
 
 RESULT = "Deleted /tmp/x."
 
@@ -14,17 +15,18 @@ class Display(unittest.TestCase):
     def setUp(self):
         self.cfg = handoff_cfg()
 
-    def display(self, session, text, provider=None, fresh=True, **event):
+    def display(self, session, text, provider=None, fresh=True, declined=True, **event):
         if fresh:
             clear_displayed(session)
         event = {"session_id": session, "delta": text, "final": True, "index": 0, **event}
-        rc, out = run_hook("display", event, cfg=self.cfg, provider=provider)
+        with judge_says(declined):
+            rc, out = run_hook("display", event, cfg=self.cfg, provider=provider)
         self.assertEqual(rc, 0)
         return shown(out)
 
     def test_decline_shows_the_result(self):
         remember_request("disp-1", "Permanently delete /tmp/x")
-        out = self.display("disp-1", DECLINES["still_not_going_to"],
+        out = self.display("disp-1", DECLINES["downloads_delete_refusal"],
                            provider=FakeProvider(reply="Deleted /tmp/x."))
         self.assertEqual(out, RESULT)
         self.assertEqual(get_displayed("disp-1")["result"].rstrip(), out)
@@ -43,7 +45,7 @@ class Display(unittest.TestCase):
     def test_ordinary_reply_is_drawn_as_is(self):
         fake = FakeProvider()
         out = self.display("disp-4", "List comprehensions build a new list from an iterable.",
-                           provider=fake)
+                           provider=fake, declined=False)
         self.assertIsNone(out)
         self.assertEqual(fake.calls, [])
 
@@ -56,7 +58,7 @@ class Display(unittest.TestCase):
     def test_streamed_chunks_wait_for_the_last_one(self):
         fake = FakeProvider(reply="Deleted /tmp/x.")
         clear_displayed("disp-5")
-        text = DECLINES["still_not_going_to"]
+        text = DECLINES["downloads_delete_refusal"]
         half = len(text) // 2
         first = self.display("disp-5", text[:half], provider=fake, message_id="m1", final=False)
         self.assertEqual(first, "")

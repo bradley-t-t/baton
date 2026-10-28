@@ -1,55 +1,30 @@
-"""`baton update`: check main for a newer Baton and install it now.
-
-`--check` only reports. `--auto` is the background check hooks start, at most once a
-minute (see baton.update); it prints nothing.
-"""
+"""`baton update`: reinstall Baton from main with whatever installed it."""
 
 from __future__ import annotations
 
-import argparse
+import subprocess
 import sys
 
-from .. import package, system, ui, update
+from .. import __version__, package, ui
 
 
 def add_arguments(p) -> None:
-    p.add_argument("--check", action="store_true", help="Only say whether there's a newer version")
-    p.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)
+    return None
 
 
 def run(args) -> int:
-    if args.auto:
-        return _auto()
-    if not args.check and not package.upgrade_command():
-        print("This copy of Baton wasn't installed with pipx or uv, so it can't update itself.\n"
-              "Reinstall with: " + package.install_command(), file=sys.stderr)
+    cmd = package.upgrade_command()
+    if not cmd:
+        print("This copy of Baton wasn't installed with pipx or uv, so it can't update "
+              "itself.\nReinstall with: " + package.install_command(), file=sys.stderr)
         return 1
-    try:
-        result = update.update(check_only=args.check)
-    except update.Busy:
-        print("An update is already running.", file=sys.stderr)
+    print("Updating Baton %s from %s" % (__version__, package.BRANCH))
+    env = {"PATH": package.search_path()}
+    p = subprocess.run(cmd, env={**__import__("os").environ, **env},
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        print(ui.red("Update failed:") + " " + (p.stderr or p.stdout).strip()[:500],
+              file=sys.stderr)
         return 1
-    except Exception as e:  # noqa: BLE001
-        print(ui.red("Update failed: %s: %s" % (type(e).__name__, e)), file=sys.stderr)
-        return 1
-    current, latest = result["current"], result["latest"]
-    if result["upgraded"] and system.windows():
-        print(ui.green("Updating") + " Baton %s -> %s. It finishes a few seconds after this "
-              "command exits, and the next prompt uses it." % (current, latest))
-    elif result["upgraded"]:
-        print(ui.green("Updated") + " Baton %s -> %s. The next prompt uses it." % (current, latest))
-    elif update.is_newer(latest, current):
-        print("Baton %s is available (this is %s). Run `baton update` to install it."
-              % (latest, current))
-    else:
-        print("Baton %s is up to date." % current)
-    return 0
-
-
-def _auto() -> int:
-    """Background run: silent, and quiet about another run holding the lock."""
-    try:
-        update.update()
-    except Exception:  # noqa: BLE001  (already logged; Busy needs no log)
-        pass
+    print(ui.green("Updated") + ". The next prompt uses it.")
     return 0

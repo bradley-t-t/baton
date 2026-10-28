@@ -6,7 +6,7 @@ When [Claude Code](https://docs.anthropic.com/en/docs/claude-code) turns down a 
 
 Three hooks. `UserPromptSubmit` only remembers what you asked and adds nothing to Claude's context. `MessageDisplay` does the work. `Stop` is the backstop.
 
-A reply reaches `MessageDisplay` before it's drawn. A word scan reads it for a first-person refusal, and an optional judge model takes the ones the scan misses. The judge is `"auto"`, so it's on only when the provider has a key or is a local server. It runs with `BATON_JUDGE_ACTIVE` set, which switches the handoff off inside its own call so it can't recurse. A one-line status before a tool call ("Looking at the file first.") gets the scan only, because judging it would race the provider against Claude doing the work.
+A reply reaches `MessageDisplay` before it's drawn. Whether it refused the request is one question, and one thing answers it: a judge model, which reads the reply against what you asked. The judge is `"auto"`, so it's on only when the provider has a key or is a local server. It runs with `BATON_JUDGE_ACTIVE` set, which switches the handoff off inside its own call so it can't recurse. A one-line status before a tool call ("Looking at the file first.") is left for `Stop` to judge at the end of the turn, because judging it here would race the provider against Claude doing the work.
 
 On a refusal the request goes to the provider with the last 4 messages and 10 tool calls, each clipped. The hook then draws the answer in place of the refusal, and anything Claude says after it in that turn is drawn as a zero-width space. `displayContent` changes only what's on screen, so the transcript and the model keep the original text. The hook gets 120 seconds, enough for a slow provider and its commands.
 
@@ -14,15 +14,15 @@ On a refusal the request goes to the provider with the last 4 messages and 10 to
 
 When Anthropic's safeguards stop a turn, Claude Code shows "API Error: ... safeguards flagged this message" where the reply would be. That's a refusal too, so your message for that turn goes to the provider and its answer is drawn in place of the error. Claude Code runs `StopFailure` rather than `Stop` on such a turn, so `MessageDisplay` is what delivers it. If Claude Code retries once after the stop and the retry answers, that answer stands.
 
-Only the current turn counts. A safeguards stop earlier in the session, a tool call you turned down, a write Holdback already refused: none of those say anything about the reply being checked now. A turn you interrupted, or one that ended in another API error (overloaded, a rate limit, the network, a login), is left alone. Questions about Baton itself are left alone too, and a reply that failed for a technical reason it names (a missing file, a network error) isn't a refusal.
+Only the current turn counts. A safeguards stop earlier in the session, a tool call you turned down, a write Holdback already refused: none of those say anything about the reply being checked now. A turn you interrupted, or one that ended in another API error (overloaded, a rate limit, the network, a login), is left alone. Questions about Baton itself are left alone too.
 
 ## Running commands
 
 For a task rather than a question, the provider answers with one fenced `bash` block (on Windows it runs in Git Bash, or as a `powershell` block when Git isn't installed). The body runs verbatim as a temp script under `set -e`, in Claude's working directory, so quoting, loops and `python3 -c` work as written. API keys are kept out of that script's environment.
 
-Every simple command has to be on the allow list unless `run_actions.allow` is `"all"`: each part of a chain or pipe, each command in a loop or `if` body, anything in `$(...)`. `max_commands` caps how many there are. A block that fails either check doesn't run at all, since skipping some lines would change what the rest does. The provider is told both limits up front, and if its block still misses it gets one more try with the reason.
+Every simple command has to be on the allow list unless `run_actions.allow` is `"all"`: each part of a chain or pipe, each command in a loop or `if` body, anything in `$(...)`. `max_commands` caps how many there are. A block that fails either check doesn't run at all, since skipping some lines would change what the rest does. The provider is told both limits up front, and a block that still misses them is reported to you rather than run.
 
-What you see is the runner's own summary of what ran, like `Deleted /tmp/example.txt.`, not the provider's prose, which can still carry fences or refusal wording. A delete is checked against what existed before the script, so the result never claims a delete of something that was already gone.
+What you see is what the script printed. When it printed nothing, you get the provider's own sentence about it with any fenced blocks stripped, and failing that, `Done.`
 
 ## Install
 
@@ -30,7 +30,7 @@ What you see is the runner's own summary of what ran, like `Deleted /tmp/example
 curl -fsSL https://taylorurl.com/baton | sh
 ```
 
-This installs the `baton` command with pipx or uv (it offers to install uv into `~/.local/bin` if neither is there), removes an old pip install of claude-handoff, adds the bin folder to your PATH in your shell's startup file (`.zshrc`, `.bashrc`, fish's `conf.d`, or `.profile`), then runs `baton setup` and `baton doctor`. Open a new terminal afterward to use `baton`. It never uses sudo.
+This installs the `baton` command with pipx or uv (it offers to install uv into `~/.local/bin` if neither is there), removes an older pip install of Baton, adds the bin folder to your PATH in your shell's startup file (`.zshrc`, `.bashrc`, fish's `conf.d`, or `.profile`), then runs `baton setup` and `baton doctor`. Open a new terminal afterward to use `baton`. It never uses sudo.
 
 On Windows, in PowerShell:
 
@@ -81,7 +81,7 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 
 ## Updates
 
-Baton keeps itself up to date. As each hook finishes, at most once a minute, it starts a background check of the version on `main` (a conditional request, so an unchanged `main` costs GitHub nothing), and if `main` is newer, reinstalls with pipx or uv, whichever installed it. Hooks never wait on it, and the next hook already runs the new version; on Windows the reinstall starts a few seconds after Baton exits, since Windows won't replace a running program. After a failed check it waits 5 minutes, doubling up to an hour, and no check starts while an update is running. `baton update` does it now, `baton update --check` only looks, and `baton doctor` shows the last check.
+`baton update` reinstalls Baton from `main` with pipx or uv, whichever installed it. The next Claude Code prompt uses the new version.
 
 ## Config
 
@@ -94,18 +94,16 @@ Baton keeps itself up to date. As each hook finishes, at most once a minute, it 
 | `providers.<name>` | | `type` (`xai`, `openai`, `anthropic`, `openai_compatible`, `github_issue`), `model`, `api_key_env`, `base_url` |
 | `providers.<name>.model` | `"auto"` | `"auto"` is the provider's newest flagship, read from its model list once a day (a local server: the first model it lists). Or a model name. |
 | `timeout_seconds` | `300` | How long to wait for the provider |
-| `judge.enabled` | `"auto"` | A second check on whether Claude declined. `"auto"` uses it when the provider has a key or is local. |
+| `judge.enabled` | `"auto"` | Whether a reply declined is decided by a model reading it against your request. `"auto"` is on when the provider has a key or is local; off, nothing is handed off. |
 | `run_actions.enabled` | `true` | Run a `bash` block from the provider's reply in Claude's working directory |
 | `run_actions.allow` | `"all"` | `"all"`, or a list of the commands that may run. With a list, a block with any other command doesn't run at all. |
 | `run_actions.read_only` | | Set by `--commands read-only`; also refuses writing to files with `>` |
 | `run_actions.max_commands`, `run_actions.timeout_seconds` | `20`, `60` | Most commands in one block; how long a block may run |
-| `install.remove_old` | `true` | `install.sh` removes an old pip install of claude-handoff |
-| `never_handoff_patterns` | `[]` | Regexes; a request or reply that matches is never sent |
 | `context.user_messages`, `context.tool_calls` | `4`, `10` | How much recent context is sent with a request |
 
 Environment overrides: `BATON=0` (off), `BATON_PROVIDER`, `BATON_MODEL`, `BATON_TIMEOUT`, `BATON_JUDGE=0`, `BATON_RUN_ACTIONS=0|1`, `BATON_CONFIG`, `BATON_STATE`.
 
-The `queue` entry in the example config is a different sort of provider. `github_issue` files the task as an issue in a repo you name and waits for a comment starting with `## Handback`, for when a person or another bot answers instead of a model. `setup` doesn't offer it, so set it in the config by hand.
+`github_issue` is a different sort of provider: it files the task as an issue in a repo you name and waits for a comment starting with `## Handback`, for when a person or another bot answers instead of a model. `setup` doesn't offer it, so set it in the config by hand.
 
 ## Privacy
 
@@ -122,8 +120,6 @@ baton uninstall --all
 This removes Baton's hooks and the PATH line the installer added, deletes `~/.config/baton` (config and keys), `~/.local/state/baton` and Baton's backups of `settings.json`, then removes the `baton` command with `pipx uninstall claude-baton` or `uv tool uninstall claude-baton`, whichever installed it. Other hooks in `settings.json` are left alone. On Windows it removes the user PATH entry the installer added, and the `baton` command a few seconds after it exits.
 
 `baton uninstall` on its own only removes the hooks, and `--purge` also deletes the config, keys, logs and backups.
-
-Baton used to be called claude-handoff. `baton setup` or `baton install` replaces the old hooks and copies the old config.
 
 To run the tests from a checkout: `python3 -m unittest`.
 

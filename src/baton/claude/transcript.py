@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 
-from ..detect import BLOCKED, USER_SAID_NO, holdback_held, matches_any, normalize
+from ..detect import BLOCKED, USER_SAID_NO, holdback_held, normalize
 
 
 def load(path: str) -> list:
@@ -127,7 +127,7 @@ def said_no(entries) -> bool:
     return any(c["error"] and USER_SAID_NO.search(c["result"] or "") for c in tool_calls(entries))
 
 
-def blocked_calls(entries, never_patterns=()) -> list:
+def blocked_calls(entries) -> list:
     """Tool calls this turn that a hook, policy or approval timeout blocked and that never ran
     on a later try. Not ones the person turned down themselves."""
     calls = tool_calls(entries)
@@ -138,8 +138,6 @@ def blocked_calls(entries, never_patterns=()) -> list:
             continue
         # The person's Holdback hook: it already said not to hand this off.
         if holdback_held(r):
-            continue
-        if matches_any(r, never_patterns) or matches_any(json.dumps(call["input"], default=str), never_patterns):
             continue
         key = json.dumps([call["tool"], call["input"]], sort_keys=True, default=str)
         if any(json.dumps([c["tool"], c["input"]], sort_keys=True, default=str) == key

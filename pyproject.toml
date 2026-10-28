@@ -42,7 +42,5 @@ version = { attr = "baton.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["baton*", "claude_handoff*"]
+include = ["baton*"]
 
-[tool.setuptools.package-data]
-baton = ["config.example.json"]

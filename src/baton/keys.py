@@ -23,16 +23,9 @@ def secrets_path() -> Path:
     return Path.home() / ".config" / "baton" / "secrets.env"
 
 
-def old_secrets_path() -> Path:
-    """Where claude-handoff kept its keys. Read only when the new file is missing."""
-    return Path.home() / ".config" / "claude-handoff" / "secrets.env"
-
-
 def read(path: Path | None = None) -> dict:
-    """KEY -> value from the secrets file (the new one, else the claude-handoff one)."""
+    """KEY -> value from the secrets file."""
     path = path or secrets_path()
-    if not path.exists() and old_secrets_path().exists():
-        path = old_secrets_path()
     out = {}
     try:
         text = path.read_text(encoding="utf-8")

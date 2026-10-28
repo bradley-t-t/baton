@@ -11,7 +11,8 @@ from unittest import mock
 from baton import handoff
 from baton.claude.transcript import current_turn, last_reply, person_messages, turn_end
 from baton.state import clear_displayed, get_displayed, remember_request
-from tests.helpers import DECLINES, FakeProvider, call, handoff_cfg, run_hook, shown, write_transcript
+from tests.helpers import (DECLINES, FakeProvider, call, handoff_cfg, judge_says, run_hook, shown,
+                          write_transcript)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "safeguards_refusal.jsonl"
 SESSION = [json.loads(line) for line in FIXTURE.read_text(encoding="utf-8").splitlines()]
@@ -76,9 +77,11 @@ class Fixture(unittest.TestCase):
         turn = current_turn(SESSION)
         self.assertEqual(person_messages(turn), ["What?"])
         self.assertIsNone(turn_end(turn, last_reply(SESSION)))
-        self.assertIsNone(handoff.reason(last_reply(SESSION), SESSION, cfg=self.cfg, use_judge=False))
-        self.assertEqual(handoff.reason(DECLINES["bare_cant"], SESSION, cfg=self.cfg),
-                         {"kind": "decline"})
+        with judge_says(False):
+            self.assertIsNone(handoff.reason(last_reply(SESSION), SESSION, cfg=self.cfg))
+        with judge_says(True):
+            self.assertEqual(handoff.reason(DECLINES["bare_cant"], SESSION, cfg=self.cfg),
+                             {"kind": "decline", "task": "", "by": "judge"})
 
 
 class Display(unittest.TestCase):
@@ -135,8 +138,9 @@ class TurnEnd(unittest.TestCase):
     def setUp(self):
         self.cfg = handoff_cfg()
 
-    def reason(self, reply, entries, **kw):
-        return handoff.reason(reply, entries, cfg=self.cfg, use_judge=False, **kw)
+    def reason(self, reply, entries, declined=True, **kw):
+        with judge_says(declined):
+            return handoff.reason(reply, entries, cfg=self.cfg, **kw)
 
     def test_refusal_without_an_error_message(self):
         entries = [person("Explain the hook."), assistant(stop_reason="refusal")]
@@ -148,12 +152,13 @@ class TurnEnd(unittest.TestCase):
     def test_a_retry_under_way_is_not_a_stop(self):
         entries = SESSION[:3]   # the notice says "continuing once with that noted"
         self.assertIsNone(turn_end(entries, "Here is the explanation."))
-        self.assertIsNone(self.reason("Here is the explanation.", entries))
-        self.assertEqual(self.reason(DECLINES["bare_cant"], entries), {"kind": "decline"})
+        self.assertIsNone(self.reason("Here is the explanation.", entries, declined=False))
+        self.assertEqual(self.reason(DECLINES["bare_cant"], entries),
+                         {"kind": "decline", "task": "", "by": "judge"})
 
     def test_a_retry_that_answered_is_not_handed_off(self):
         entries = SESSION[:3] + [assistant("Here is the explanation.", stop_reason="end_turn")]
-        self.assertIsNone(self.reason("Here is the explanation.", entries))
+        self.assertIsNone(self.reason("Here is the explanation.", entries, declined=False))
 
     def test_a_notice_without_a_retry_is_a_stop(self):
         entries = [person("Explain the hook."),
@@ -183,8 +188,6 @@ class TurnEnd(unittest.TestCase):
     def test_the_usual_gates_still_apply(self):
         self.assertIsNone(self.reason(ERROR_TEXT, STOPPED, user="Why didn't the handoff fire?"))
         self.assertIsNone(handoff.reason(ERROR_TEXT, STOPPED, cfg=handoff_cfg(provider="")))
-        cfg = handoff_cfg(never_handoff_patterns=["Tether"])
-        self.assertIsNone(handoff.reason(ERROR_TEXT, STOPPED, cfg=cfg))
         from tests.helpers import NOT_BLOCKED_ERRORS
         said_no = [SESSION[0]] + call(NOT_BLOCKED_ERRORS["user_rejected"]) + SESSION[1:6]
         self.assertIsNone(self.reason(ERROR_TEXT, said_no))

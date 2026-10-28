@@ -7,19 +7,23 @@ Windows that bash is Git Bash; without Git Bash the provider is asked for a
 Every simple command (each part of a chain, pipe, loop body or $(...)) has to be on
 the allow list unless run_actions.allow is "all", and run_actions.max_commands caps
 how many there are. A block that fails a check is not run at all.
+
+What the person sees afterwards is what the script printed, or, when it printed
+nothing, the sentence the provider wrote about it.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import time
 
 from .. import keys, system
 from ..state import log
-from .shell import extract_fences, first_word, logical_lines, script_commands, strip_fences, writes_file
-from .summary import GLOB, describe, failure_line, outcome, still_there
+from .shell import (extract_fences, first_word, logical_lines, script_commands, strip_fences,
+                    writes_file)
 
 ALL = "all"
 # How each shell's script file starts: stop at the first failing command.
@@ -27,8 +31,9 @@ SCRIPT_HEADER = {"bash": "#!/usr/bin/env bash\nset -e\n",
                  "powershell": "$ErrorActionPreference = 'Stop'\n"}
 SCRIPT_SUFFIX = {"bash": ".sh", "powershell": ".ps1"}
 DEFAULT_MAX_COMMANDS = 20
+MAX_RESULT_CHARS = 2000
 KEY_NAMES = ("XAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN",
-             "BATON_TOKEN", "CLAUDE_HANDOFF_TOKEN")
+             "BATON_TOKEN")
 
 
 def _allow_value(cfg: dict, provider_name: str):
@@ -107,6 +112,30 @@ def script_env(cfg: dict) -> dict:
     return {k: v for k, v in os.environ.items() if k not in hidden}
 
 
+def result_line(stdout: str, prose: str) -> str:
+    """What to show for a script that worked: what it printed, else the provider's own
+    sentence about it, else a plain "Done."."""
+    out = (stdout or "").strip()
+    if out:
+        return out[:MAX_RESULT_CHARS]
+    prose = (prose or "").strip()
+    if prose and len(prose) <= MAX_RESULT_CHARS and not prose.lower().startswith("sure"):
+        return prose
+    return "Done."
+
+
+def failure_line(stderr: str, code) -> str:
+    """One plain line for a failed run, without the command text."""
+    msg = ""
+    for line in (stderr or "").splitlines():
+        s = re.sub(r"^(?:bash|sh|/[^:]*\.sh)(?::\s*line\s*\d+)?:\s*", "", line.strip())
+        if s:
+            msg = s
+            break
+    msg = msg[:200].rstrip(".")
+    return ("It failed: %s." % msg) if msg else ("It failed (exit %s)." % code)
+
+
 def _result(ran: bool, ok: bool, summary: str = "", output: str = "", not_run: str = "") -> dict:
     out = {"ran": ran, "ok": ok, "summary": summary, "log": output or summary}
     if not_run:
@@ -160,10 +189,6 @@ def run_reply(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict:
 
 
 def _run_script(body: str, lines: list, text: str, cfg: dict, workdir: str, timeout: int) -> dict:
-    # Which delete targets exist now, so the result never claims a delete of
-    # something that was already gone.
-    before = {q: os.path.lexists(q) for q in outcome(lines, workdir)["deleted"]
-              if not GLOB.search(q) and "$" not in q}
     started = time.monotonic()
     path = None
     try:
@@ -183,9 +208,7 @@ def _run_script(body: str, lines: list, text: str, cfg: dict, workdir: str, time
         log("run_actions script %d lines -> %s" % (len(lines), p.returncode))
         if p.returncode != 0:
             return _result(True, False, failure_line(p.stderr or p.stdout, p.returncode), output)
-        summary = describe(lines, prose=strip_fences(text), cwd=workdir, before=before)
-        failed = bool(still_there(outcome(lines, workdir)["deleted"])) or False in before.values()
-        return _result(True, not failed, summary, output)
+        return _result(True, True, result_line(p.stdout, strip_fences(text)), output)
     except subprocess.TimeoutExpired:
         log("run_actions timeout")
         return _result(True, False, "It failed: timed out after %ss." % timeout)

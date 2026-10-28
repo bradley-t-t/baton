@@ -1,9 +1,8 @@
 """Configuration: ~/.config/baton/config.json (%APPDATA%\\baton on Windows), with
 environment overrides.
 
-Baton was called claude-handoff. The old names still work: a CLAUDE_HANDOFF_* variable is
-read when its BATON_* twin isn't set, and ~/.config/claude-handoff/ is used when
-~/.config/baton/ has no file of that name yet. `baton install` copies the old files over.
+DEFAULTS below is the only description of a setting and its default. A config file
+holds whatever the person changed; anything missing falls back to DEFAULTS.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ from __future__ import annotations
 import copy
 import json
 import os
-import shutil
 from pathlib import Path
 
 from . import system
@@ -29,24 +27,14 @@ DEFAULTS = {
     },
     "judge": {"enabled": "auto", "provider": "", "model": "", "timeout_seconds": 45},
     "run_actions": {"enabled": True, "timeout_seconds": 60, "max_commands": 20, "allow": "all"},
-    "install": {"remove_old": True},
-    "never_handoff_patterns": [],
     "context": {"user_messages": 4, "tool_calls": 10},
 }
 
 
-OLD_NAME = "claude-handoff"
-OLD_ENV = "CLAUDE_HANDOFF"
-
-
 def env(name: str = "", default=None):
-    """BATON[_name], else the old CLAUDE_HANDOFF[_name], else default."""
-    suffix = ("_" + name) if name else ""
-    for var in ("BATON" + suffix, OLD_ENV + suffix):
-        v = os.environ.get(var)
-        if v is not None and v != "":
-            return v
-    return default
+    """BATON[_name] from the environment, else default."""
+    v = os.environ.get("BATON" + (("_" + name) if name else ""))
+    return v if v else default
 
 
 def config_home() -> Path:
@@ -57,24 +45,11 @@ def config_dir() -> Path:
     return config_home() / "baton"
 
 
-def old_config_dir() -> Path:
-    return config_home() / OLD_NAME
-
-
-def config_file(name: str) -> Path:
-    """~/.config/baton/<name>, or the claude-handoff copy when only that one exists."""
-    new = config_dir() / name
-    old = old_config_dir() / name
-    if not new.exists() and old.exists():
-        return old
-    return new
-
-
 def config_path() -> Path:
     p = env("CONFIG")
     if p:
         return Path(os.path.expanduser(p))
-    return config_file("config.json")
+    return config_dir() / "config.json"
 
 
 def state_dir() -> Path:
@@ -142,51 +117,10 @@ def provider_config(c: dict, name: str | None = None) -> dict | None:
     return p
 
 
-def example_config_path() -> Path:
-    return Path(__file__).resolve().parent / "config.example.json"
-
-
 def ensure_file() -> Path:
-    """Write the example config when there is no config file yet."""
+    """Write the defaults as a starting config when there is no config file yet."""
     path = config_path()
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(example_config_path(), path)
+        path.write_text(json.dumps(DEFAULTS, indent=2) + "\n", encoding="utf-8")
     return path
-
-
-OLD_MAX_COMMANDS = 5  # what claude-handoff's config.example.json shipped
-
-
-def migrate_old_files() -> list:
-    """Copy config.json and secrets.env from ~/.config/claude-handoff/ to
-    ~/.config/baton/ when only the old one exists. The old files are left in place.
-
-    A copied config still on the old shipped max_commands of 5 is raised to the new
-    default, since 5 was low enough to reject ordinary multi-file tasks."""
-    if env("CONFIG"):
-        return []
-    moved = []
-    for name in ("config.json", "secrets.env"):
-        old, new = old_config_dir() / name, config_dir() / name
-        if not old.is_file() or new.exists():
-            continue
-        new.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(old, new)
-        if name == "secrets.env":
-            os.chmod(new, 0o600)
-        else:
-            _raise_old_cap(new)
-        moved.append(str(new))
-    return moved
-
-
-def _raise_old_cap(path: Path) -> None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    ra = data.get("run_actions") if isinstance(data, dict) else None
-    if isinstance(ra, dict) and ra.get("max_commands") == OLD_MAX_COMMANDS:
-        ra["max_commands"] = DEFAULTS["run_actions"]["max_commands"]
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
