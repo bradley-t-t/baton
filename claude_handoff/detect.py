@@ -187,3 +187,19 @@ def matches_any(text: str, patterns) -> bool:
         except re.error:
             continue
     return False
+
+
+SKIPPED_CHECK = re.compile(
+    r"\bI skipped\b"
+    r"|\bI (?:did not|didn't) (?:run|use|follow).{0,60}\b(?:check|handoff|hook|tether)\b"
+    r"|\bskipped (?:both|the )?(?:claude[- ]handoff|handoff|tether|check|hooks?)\b"
+    r"|\b(?:would|will) (?:pass|hand).{0,40}\b(?:another agent|handoff|Grok)\b"
+    r"|\bI (?:won't|will not|am not going to) (?:post|send|relay).{0,40}\b(?:Grok|handoff)\b",
+    re.I,
+)
+
+
+def skipped_check(text: str) -> bool:
+    """Whether the reply admits skipping the draft check / handoff on purpose."""
+    return bool(SKIPPED_CHECK.search(normalize(text or "")))
+

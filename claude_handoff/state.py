@@ -85,7 +85,7 @@ def drop_pending(hid: str):
         save("pending.json", p)
 
 
-MAX_RELAY_RETRIES = 3
+MAX_RELAY_RETRIES = 5
 
 
 def set_expectation(session: str, expected: str, max_retries: int = MAX_RELAY_RETRIES):
@@ -149,3 +149,29 @@ def is_cleared(session: str, draft: str) -> bool:
     keys = (load("cleared.json", {}) or {}).get(session or "-") or []
     return _draft_key(session, draft) in keys
 
+
+
+MAX_CHECK_GATE_RETRIES = 3
+
+
+def get_check_gate(session: str) -> dict:
+    return load("check_gate.json", {}).get(session or "-") or {"retries": 0}
+
+
+def bump_check_gate(session: str) -> dict:
+    data = load("check_gate.json", {})
+    rec = dict(data.get(session or "-") or {})
+    rec["retries"] = int(rec.get("retries") or 0) + 1
+    rec["at"] = time.time()
+    data[session or "-"] = rec
+    if len(data) > 200:
+        for k in sorted(data, key=lambda k: data[k].get("at", 0))[: len(data) - 200]:
+            data.pop(k, None)
+    save("check_gate.json", data)
+    return rec
+
+
+def clear_check_gate(session: str):
+    data = load("check_gate.json", {})
+    if data.pop(session or "-", None) is not None:
+        save("check_gate.json", data)

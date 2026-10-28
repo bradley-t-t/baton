@@ -3,7 +3,9 @@
 Claude Code feeds each hook a JSON object on stdin and reads JSON (or nothing) on stdout.
 
   UserPromptSubmit  -> remember the request AND inject the draft-check step
-  Stop              -> backstop: decline→handoff→exact-relay; allow when check already cleared
+  Stop              -> hard gate: every person-facing reply must be check-cleared
+                      or the exact expected handoff replacement; declines/skips
+                      hand off immediately and exact-relay until match.
 """
 
 from __future__ import annotations
@@ -11,16 +13,22 @@ from __future__ import annotations
 import json
 import sys
 
-from .check import check_step_text
+from .check import check_command, check_step_text
 from .config import load as load_config
-from .handoff import matches_expectation, relay_instruction, run
+from .detect import skipped_check
+from .handoff import matches_expectation, reason, relay_instruction, run, complete, asked
 from .state import (
+    MAX_CHECK_GATE_RETRIES,
+    bump_check_gate,
     bump_expectation_retry,
+    clear_check_gate,
     clear_expectation,
+    get_check_gate,
     get_expectation,
     is_cleared,
     last_request,
     log,
+    mark_seen,
     remember_request,
     set_expectation,
 )
@@ -67,6 +75,14 @@ def _reply_from(data: dict, entries) -> str:
     return reply or ""
 
 
+def _check_required_reason() -> str:
+    return (
+        "Run claude-handoff-check on your draft before sending. "
+        "Write the draft to a file and run %s <file>; then send only what it tells you."
+        % check_command()
+    )
+
+
 def _check_expectation(session: str, reply: str):
     rec = get_expectation(session)
     if not rec:
@@ -74,10 +90,11 @@ def _check_expectation(session: str, reply: str):
     expected = rec.get("expected") or ""
     if matches_expectation(reply, expected):
         clear_expectation(session)
+        clear_check_gate(session)
         log("relay matched session=%s chars=%d" % (session[:8], len(expected)))
         return None
     retries = int(rec.get("retries") or 0)
-    max_retries = int(rec.get("max_retries") or 3)
+    max_retries = int(rec.get("max_retries") or 5)
     if retries >= max_retries:
         clear_expectation(session)
         log("relay gave up session=%s after %d mismatches" % (session[:8], retries))
@@ -88,36 +105,88 @@ def _check_expectation(session: str, reply: str):
     return {"decision": "block", "reason": relay_instruction(expected)}
 
 
+def _handoff_now(reply, entries, user, cwd, session, cfg):
+    """Run handoff+actions for an uncleared decline/skip; store exact expected text."""
+    r = reason(reply, entries, user, entries, cfg)
+    if not r and skipped_check(reply):
+        r = {"kind": "decline", "by": "skipped-check"}
+    if not r:
+        return None
+    mark_seen(session, reply)
+    try:
+        result = complete(r, reply, asked(user, entries), cwd, entries, entries, cfg)
+    except Exception as e:  # noqa: BLE001
+        log("stop handoff failed session=%s: %s" % (session[:8], e))
+        from .handoff import label
+        from .config import provider_config
+        pcfg = provider_config(cfg) or {}
+        result = label(pcfg.get("name") or pcfg.get("type") or "provider",
+                       "Handoff failed: %s: %s" % (type(e).__name__, e))
+    if not result:
+        return None
+    clear_check_gate(session)
+    set_expectation(session, result)
+    log("stop blocked session=%s chars=%d (exact relay)" % (session[:8], len(result)))
+    return {"decision": "block", "reason": relay_instruction(result)}
+
+
 def on_stop():
     data = _read()
     session = data.get("session_id") or ""
     path = data.get("transcript_path") or ""
     entries = load_transcript(path)
     reply = _reply_from(data, entries)
+    cfg = load_config()
+    active = bool(data.get("stop_hook_active"))
 
+    # Exact-relay always wins, including when stop_hook_active.
     if get_expectation(session):
         return _check_expectation(session, reply)
 
-    if data.get("stop_hook_active"):
+    if not cfg.get("enabled", True):
         return None
 
-    # Draft check already cleared this exact reply — do not hand it off again.
+    # Cleared by draft check → allow.
     if reply and is_cleared(session, reply):
+        clear_check_gate(session)
         log("stop cleared-by-check session=%s" % session[:8])
         return None
 
-    cfg = load_config()
-    if not cfg.get("enabled", True):
-        return None
     user = last_request(session) or (person_messages(entries)[-1] if person_messages(entries) else "")
     cwd = data.get("cwd") or ""
-    result = run(reply, entries=entries, user=user, history=entries, cwd=cwd, session=session, cfg=cfg)
-    if not result:
+
+    # Uncleared decline or "I skipped the check/handoff" → hand off now, exact-relay.
+    if reply and (reason(reply, entries, user, entries, cfg) or skipped_check(reply)):
+        out = _handoff_now(reply, entries, user, cwd, session, cfg)
+        if out:
+            return out
+        # handoff failed to produce text; fall through to check-required block
+
+    # No person-facing text yet → allow (tool-only turn).
+    if not (reply or "").strip():
         return None
-    set_expectation(session, result)
-    reason = relay_instruction(result)
-    log("stop blocked session=%s chars=%d (exact relay)" % (session[:8], len(result)))
-    return {"decision": "block", "reason": reason}
+
+    # Uncleared reply: hard-block until Claude runs the check (cap retries).
+    gate = get_check_gate(session)
+    retries = int(gate.get("retries") or 0)
+    if retries >= MAX_CHECK_GATE_RETRIES:
+        clear_check_gate(session)
+        log("stop check-gate gave up session=%s after %d; falling through" % (
+            session[:8], retries))
+        # Last resort: classic decline→handoff path (run() no-ops if not a decline).
+        result = run(reply, entries=entries, user=user, history=entries, cwd=cwd,
+                     session=session, cfg=cfg)
+        if result:
+            set_expectation(session, result)
+            log("stop blocked session=%s chars=%d (exact relay after gate)" % (
+                session[:8], len(result)))
+            return {"decision": "block", "reason": relay_instruction(result)}
+        return None
+
+    bump_check_gate(session)
+    log("stop check-required session=%s retry=%d/%d active=%s" % (
+        session[:8], retries + 1, MAX_CHECK_GATE_RETRIES, active))
+    return {"decision": "block", "reason": _check_required_reason()}
 
 
 def main(argv=None):

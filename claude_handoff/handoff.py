@@ -87,8 +87,7 @@ def _task_for(r: dict, user: str, reply: str) -> str:
 
 
 RELAY_PREFIX = (
-    "Reply with ONLY the following text, character for character. "
-    "Nothing before it, nothing after it, no commentary:\n\n"
+    "Send ONLY this text, nothing else:\n\n"
 )
 
 

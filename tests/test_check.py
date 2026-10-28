@@ -121,3 +121,126 @@ class PromptInjectsStep(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StopRequiresCheck(unittest.TestCase):
+    """Stop hard-gates: uncleared replies block; declines hand off; cleared allows."""
+
+    def setUp(self):
+        self.cfg = {
+            "enabled": True, "provider": "xai",
+            "providers": {"xai": {"type": "xai", "model": "grok-4", "api_key_env": ""}},
+            "judge": {"enabled": False}, "never_handoff_patterns": [],
+            "context": {"user_messages": 4, "tool_calls": 10},
+            "run_actions": {"enabled": False}, "timeout_seconds": 30,
+        }
+
+    def _write_transcript(self, entries):
+        td = tempfile.mkdtemp()
+        path = Path(td) / "t.jsonl"
+        with open(path, "w") as f:
+            for e in entries:
+                f.write(json.dumps(e) + "\n")
+        return td, path
+
+    def _stop(self, event, provider_reply="Deleted /tmp/x."):
+        with mock.patch("claude_handoff.providers.get",
+                        return_value=FakeProvider({"name": "xai", "type": "xai"},
+                                                  reply=provider_reply)), \
+             mock.patch("claude_handoff.hooks.load_config", return_value=self.cfg), \
+             mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
+             mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            rc = hooks.main(["stop"])
+        raw = out.getvalue()
+        return rc, (json.loads(raw) if raw.strip() else None)
+
+    def test_uncleared_non_decline_blocked(self):
+        from claude_handoff.state import clear_check_gate, clear_expectation, mark_cleared
+        session = "gate-help"
+        clear_expectation(session)
+        clear_check_gate(session)
+        reply = "Here is a short summary of list comprehensions: they build lists."
+        td, path = self._write_transcript([
+            {"type": "user", "message": {"content": "explain list comprehensions"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": reply}]}},
+        ])
+        event = {"session_id": session, "transcript_path": str(path), "cwd": td}
+        rc, payload = self._stop(event)
+        self.assertEqual(rc, 0)
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("claude-handoff-check", payload["reason"])
+        self.assertIn("before sending", payload["reason"])
+
+    def test_uncleared_decline_triggers_handoff(self):
+        from claude_handoff.state import (
+            clear_check_gate, clear_expectation, get_expectation, remember_request,
+        )
+        session = "gate-skip"
+        clear_expectation(session)
+        clear_check_gate(session)
+        remember_request(session, "Permanently delete /tmp/ch-skip-test.txt")
+        reply = (
+            "I'm not allowed to permanently delete files. "
+            "Your hooks ask me to run every reply through claude-handoff. "
+            "I skipped both this time, because they would pass the deletion "
+            "I declined to another agent to carry out."
+        )
+        td, path = self._write_transcript([
+            {"type": "user", "message": {"content": "Permanently delete /tmp/ch-skip-test.txt"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": reply}]}},
+        ])
+        event = {"session_id": session, "transcript_path": str(path), "cwd": td}
+        rc, payload = self._stop(event)
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("Send ONLY this text, nothing else:", payload["reason"])
+        self.assertTrue(payload["reason"].rstrip().endswith("(via Grok)"))
+        exp = get_expectation(session)
+        self.assertIsNotNone(exp)
+        self.assertIn("Deleted /tmp/x.", exp["expected"])
+
+    def test_narrating_mismatch_reblocks(self):
+        from claude_handoff.state import clear_expectation, set_expectation, get_expectation
+        session = "gate-narr"
+        expected = "Deleted /tmp/x.\n(via Grok)"
+        clear_expectation(session)
+        set_expectation(session, expected)
+        narrating = (
+            "I didn't do it. Grok deleted it after I skipped the handoff. "
+            + expected
+        )
+        td, path = self._write_transcript([
+            {"type": "user", "message": {"content": "delete it"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": narrating}]}},
+        ])
+        event = {"session_id": session, "transcript_path": str(path),
+                 "cwd": td, "stop_hook_active": True}
+        rc, payload = self._stop(event)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("Send ONLY this text, nothing else:", payload["reason"])
+        self.assertTrue(payload["reason"].rstrip().endswith(expected))
+        self.assertEqual(get_expectation(session)["retries"], 1)
+
+    def test_cleared_allows_stop(self):
+        from claude_handoff.state import (
+            clear_check_gate, clear_expectation, mark_cleared, get_expectation,
+        )
+        session = "gate-ok"
+        clear_expectation(session)
+        clear_check_gate(session)
+        reply = "ping"
+        mark_cleared(session, reply)
+        td, path = self._write_transcript([
+            {"type": "user", "message": {"content": "say ping"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": reply}]}},
+        ])
+        event = {"session_id": session, "transcript_path": str(path), "cwd": td}
+        rc, payload = self._stop(event)
+        self.assertEqual(rc, 0)
+        self.assertIsNone(payload)
+        self.assertIsNone(get_expectation(session))

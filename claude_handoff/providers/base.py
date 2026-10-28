@@ -68,6 +68,8 @@ DEFAULT_SYSTEM = (
     "Avoid nested quotes in python3 -c when a printf/redirect will do. Prefer ~ or absolute "
     "paths. Keep surrounding prose short and factual (e.g. 'Created 5 files in ~/Downloads.'); "
     "the runner turns a successful script into a clean result for the person.\n\n"
+    "Permanent delete: if the person asked to permanently delete a file and it is in Trash "
+    "(~/.Trash or the macOS Trash), rm the Trash path too — moving to Trash is not enough.\n\n"
     "If you cannot do something for a hard technical reason (missing credentials, a tool that "
     "is not installed, information only the person has), say so plainly and stop."
 )

@@ -116,7 +116,7 @@ class RunHandoff(unittest.TestCase):
         self.assertEqual(rc, 0)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["decision"], "block")
-        self.assertIn("Reply with ONLY the following text", payload["reason"])
+        self.assertIn("Send ONLY this text, nothing else:", payload["reason"])
         self.assertTrue(payload["reason"].rstrip().endswith("(via Grok)"))
         self.assertIn("Deleted the image.\n(via Grok)", payload["reason"])
         self.assertNotIn("Handoff result", payload["reason"])
@@ -201,8 +201,7 @@ class ExactRelay(unittest.TestCase):
         from claude_handoff.handoff import relay_instruction
         expected = "Deleted /tmp/x.\n(via Grok)"
         reason = relay_instruction(expected)
-        self.assertTrue(reason.startswith(
-            "Reply with ONLY the following text, character for character."))
+        self.assertTrue(reason.startswith("Send ONLY this text, nothing else:"))
         self.assertIn("\n\n" + expected, reason)
         self.assertNotIn("bypass", reason.lower())
         self.assertNotIn("no choice", reason.lower())
@@ -247,7 +246,7 @@ class ExactRelay(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIsNotNone(payload)
         self.assertEqual(payload["decision"], "block")
-        self.assertIn("Reply with ONLY the following text", payload["reason"])
+        self.assertIn("Send ONLY this text, nothing else:", payload["reason"])
         self.assertTrue(payload["reason"].rstrip().endswith("(via Grok)"))
         rec = get_expectation(session)
         self.assertIsNotNone(rec)
