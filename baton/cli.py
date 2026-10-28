@@ -24,7 +24,9 @@ def main(argv=None) -> int:
     i.add_argument("--settings", help="Claude Code settings file")
     u = sub.add_parser("uninstall", help="Remove Baton's hooks from ~/.claude/settings.json")
     u.add_argument("--purge", action="store_true",
-                   help="Also delete Baton's config, API keys and logs")
+                   help="Also delete Baton's config, API keys, logs and settings backups")
+    u.add_argument("--all", action="store_true",
+                   help="Everything --purge does, then remove the baton command itself")
     u.add_argument("-y", "--yes", action="store_true", help="Don't ask before deleting")
     u.add_argument("--settings", help="Claude Code settings file")
     sub.add_parser("status", help="Show whether hooks are installed")
@@ -76,31 +78,7 @@ def main(argv=None) -> int:
         return 0
 
     if args.cmd == "uninstall":
-        from . import install as inst
-        from . import ui
-        path = inst.uninstall()
-        print("Removed Baton's hooks from %s" % path)
-        if args.purge:
-            targets = [q for q in inst.data_paths() if q.exists()]
-            if not targets:
-                print("No Baton config or logs to delete.")
-            else:
-                print("This deletes:")
-                for q in targets:
-                    print("  %s" % q)
-                if not args.yes:
-                    if not ui.interactive():
-                        print("Pass --yes to delete them without a prompt.", file=sys.stderr)
-                        return 1
-                    if not ui.confirm("Delete these, including any API keys in them?", False):
-                        print("Kept them.")
-                        return 0
-                for q in inst.purge(targets):
-                    print("Deleted %s" % q)
-        else:
-            print("Config and keys are still in ~/.config/baton. "
-                  "`baton uninstall --purge` deletes them.")
-        return 0
+        return _uninstall(args)
 
     if args.cmd == "status":
         from . import install as inst
@@ -145,3 +123,53 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def _uninstall(args) -> int:
+    import os
+    import shlex
+    import shutil
+    from . import install as inst
+    from . import ui
+    purge = args.purge or args.all
+    remove = inst.removal_command()
+    remove_text = " ".join(shlex.quote(x) for x in remove)
+
+    path = inst.uninstall()
+    print("Removed Baton's hooks from %s" % path)
+    if purge:
+        targets = [q for q in inst.data_paths() if q.exists()] + inst.backups(path)
+        if targets:
+            print("This deletes:")
+            for q in targets:
+                print("  %s" % q)
+            if not args.yes:
+                if not ui.interactive():
+                    print("Pass --yes to delete them without a prompt.", file=sys.stderr)
+                    return 1
+                if not ui.confirm("Delete these, including any API keys in them?", False):
+                    print("Kept them.")
+                    return 0
+            for q in inst.purge(targets):
+                print("Deleted %s" % q)
+        else:
+            print("No Baton config or logs to delete.")
+    else:
+        print("Config and keys are still in ~/.config/baton. `baton uninstall --purge` deletes them.")
+
+    if not remove:
+        return 0
+    if not args.all:
+        print("To remove the baton command too: %s" % remove_text)
+        print("Or run `baton uninstall --all` to do everything in one step.")
+        return 0
+    if not shutil.which(remove[0]):
+        print("Last step, remove the baton command: %s" % remove_text)
+        return 0
+    if not args.yes and not ui.confirm("Remove the baton command now (%s)?" % remove_text, True):
+        print("Kept it. To remove it later: %s" % remove_text)
+        return 0
+    print("Running: %s" % remove_text)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execvp(remove[0], remove)  # replaces this process, so baton can remove itself

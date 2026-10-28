@@ -70,10 +70,12 @@ When Claude declines a request, Baton sends that request, your last few messages
 ## Uninstall
 
 ```bash
-baton uninstall            # removes the hooks, keeps config and keys
-baton uninstall --purge    # also deletes ~/.config/baton and ~/.local/state/baton
-pipx uninstall claude-baton   # or: uv tool uninstall claude-baton
+baton uninstall --all
 ```
+
+This removes Baton's hooks, deletes `~/.config/baton` (config and keys), `~/.local/state/baton` and Baton's backups of `settings.json`, then removes the `baton` command with `pipx uninstall claude-baton` or `uv tool uninstall claude-baton`, whichever installed it. Other hooks in `settings.json` are left alone.
+
+`baton uninstall` on its own only removes the hooks, and `--purge` also deletes the config, keys, logs and backups.
 
 Baton used to be called claude-handoff. `baton setup` or `baton install` replaces the old hooks and copies the old config.
 

@@ -265,6 +265,94 @@ class Uninstall(Home):
         self.assertTrue(self.settings.exists())
 
 
+class UninstallEmpty(Home):
+    def test_no_empty_hooks_key_is_left(self):
+        self.settings.parent.mkdir(parents=True)
+        self.settings.write_text('{"model": "opus"}')
+        self.cli("setup", "--provider", "local", "--yes", "--no-test")
+        self.cli("uninstall")
+        self.assertEqual(json.loads(self.settings.read_text()), {"model": "opus"})
+
+
+class UninstallAll(Home):
+    def setUp(self):
+        super().setUp()
+        self.cli("setup", "--provider", "local", "--yes", "--no-test")
+        self.remove = mock.patch("baton.install.removal_command",
+                                 return_value=["pipx", "uninstall", "claude-baton"])
+        self.remove.start()
+
+    def tearDown(self):
+        self.remove.stop()
+        super().tearDown()
+
+    def test_plain_uninstall_names_the_last_step(self):
+        rc, out = self.cli("uninstall")
+        self.assertEqual(rc, 0)
+        self.assertIn("To remove the baton command too: pipx uninstall claude-baton", out)
+        self.assertIn("baton uninstall --all", out)
+
+    def test_all_removes_everything_then_the_package(self):
+        with mock.patch("shutil.which", return_value="/usr/bin/pipx"), \
+                mock.patch("os.execvp") as ex:
+            rc, out = self.cli("uninstall", "--all", "--yes")
+        ex.assert_called_once_with("pipx", ["pipx", "uninstall", "claude-baton"])
+        self.assertEqual(self.ours("Stop"), [])
+        self.assertFalse(self.cfg_file.parent.exists())
+        self.assertEqual(inst.backups(self.settings), [])
+        self.assertTrue(self.settings.exists())
+
+    def test_all_prints_the_command_when_the_tool_is_missing(self):
+        with mock.patch("shutil.which", return_value=None), mock.patch("os.execvp") as ex:
+            rc, out = self.cli("uninstall", "--all", "--yes")
+        self.assertEqual(rc, 0)
+        ex.assert_not_called()
+        self.assertIn("Last step, remove the baton command: pipx uninstall claude-baton", out)
+
+    def test_all_needs_yes_when_not_interactive(self):
+        with mock.patch("os.execvp") as ex:
+            rc, _ = self.cli("uninstall", "--all")
+        self.assertEqual(rc, 1)
+        ex.assert_not_called()
+        self.assertTrue(self.cfg_file.exists())
+
+
+class InstallMethod(unittest.TestCase):
+    def test_pipx_and_uv_are_recognised(self):
+        for marker, want in (("pipx_metadata.json", ["pipx", "uninstall", "claude-baton"]),
+                             ("uv-receipt.toml", ["uv", "tool", "uninstall", "claude-baton"])):
+            prefix = Path(tempfile.mkdtemp()) / "claude-baton"
+            prefix.mkdir()
+            (prefix / marker).write_text("")
+            with mock.patch("sys.prefix", str(prefix)):
+                self.assertEqual(inst.removal_command(), want)
+
+    def test_pip_install_uses_pip(self):
+        with mock.patch("sys.prefix", tempfile.mkdtemp()), \
+                mock.patch("baton.install._installed_name", return_value="claude-baton"):
+            cmd = inst.removal_command()
+        self.assertEqual(cmd[1:], ["-m", "pip", "uninstall", "-y", "claude-baton"])
+
+    def test_not_installed_gives_nothing(self):
+        with mock.patch("sys.prefix", tempfile.mkdtemp()), \
+                mock.patch("baton.install._installed_name", return_value=""):
+            self.assertEqual(inst.removal_command(), [])
+
+
+class Backups(Home):
+    def test_only_the_newest_three_are_kept(self):
+        self.settings.parent.mkdir(parents=True)
+        self.settings.write_text("{}")
+        for i in range(5):
+            (self.settings.parent / ("settings.json.bak-2020010%d-000000" % i)).write_text("{}")
+        (self.settings.parent / "settings.json.bak-mine").write_text("{}")
+        inst.install()
+        names = [q.name for q in inst.backups(self.settings)]
+        self.assertEqual(len(names), 3)
+        self.assertNotIn("settings.json.bak-20200100-000000", names)
+        self.assertTrue((self.settings.parent / "settings.json.bak-mine").exists())
+
+
 class ReadOnly(unittest.TestCase):
     CFG = {"run_actions": {"enabled": True, "read_only": True,
                            "allow": ["ls", "echo", "cat", "printf"]}}

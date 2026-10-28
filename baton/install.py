@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -86,11 +87,55 @@ def _load(path: Path) -> dict:
         return {}
 
 
+KEEP_BACKUPS = 3
+BACKUP_NAME = re.compile(r"\.bak-\d{8}-\d{6}$")
+
+
+def backups(path: Path = None) -> list:
+    """The settings backups Baton made, oldest first."""
+    path = path or settings_path()
+    if not path.parent.is_dir():
+        return []
+    return sorted(q for q in path.parent.glob(path.name + ".bak-*")
+                  if BACKUP_NAME.search(q.name) and q.is_file())
+
+
+def removal_command() -> list:
+    """The command that removes the installed baton package, for how it was installed."""
+    import sys
+    prefix = Path(sys.prefix)
+    if (prefix / "pipx_metadata.json").exists():
+        return ["pipx", "uninstall", prefix.name]
+    if (prefix / "uv-receipt.toml").exists():
+        return ["uv", "tool", "uninstall", prefix.name]
+    name = _installed_name()
+    if name:
+        return [sys.executable, "-m", "pip", "uninstall", "-y", name]
+    return []
+
+
+def _installed_name() -> str:
+    try:
+        from importlib import metadata
+    except ImportError:  # pragma: no cover
+        return ""
+    for name in ("claude-baton", "baton", "claude-handoff"):
+        try:
+            eps = metadata.distribution(name).entry_points
+        except Exception:
+            continue
+        if any(ep.value.startswith(("baton.", "claude_handoff.")) for ep in eps):
+            return name
+    return ""
+
+
 def _save(path: Path, data: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         backup = path.with_suffix(path.suffix + ".bak-%s" % time.strftime("%Y%m%d-%H%M%S"))
         shutil.copy2(path, backup)
+        for old in backups(path)[:-KEEP_BACKUPS]:
+            old.unlink()
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n")
     os.replace(tmp, path)
@@ -172,7 +217,10 @@ def uninstall(path: Path = None) -> Path:
         else:
             hooks.pop(event, None)
     if changed:
-        data["hooks"] = hooks
+        if hooks:
+            data["hooks"] = hooks
+        else:
+            data.pop("hooks", None)
         _save(path, data)
     return path
 
