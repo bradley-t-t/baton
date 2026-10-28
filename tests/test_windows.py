@@ -222,7 +222,7 @@ class ScriptShell(unittest.TestCase):
     def test_powershell_fences_are_read(self):
         self.assertEqual(extract_fences("```powershell\nGet-ChildItem\n```"), ["Get-ChildItem\n"])
 
-    @unittest.skipUnless(system.shutil.which("pwsh"), "needs pwsh")
+    @unittest.skipUnless(os.name == "nt" or system.shutil.which("pwsh"), "needs PowerShell")
     def test_a_powershell_block_really_runs(self):
         import tempfile
         work = tempfile.mkdtemp()
