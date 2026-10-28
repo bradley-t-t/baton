@@ -1,4 +1,4 @@
-"""The `baton` command: setup, doctor, install, uninstall, status, test, version."""
+"""The `baton` command: setup, doctor, update, install, uninstall, status, test, version."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 
 from . import __version__, keys, providers
 from .claude import settings
-from .commands import doctor, setup, uninstall
+from .commands import doctor, setup, uninstall, update
 from .config import config_path, ensure_file, load, migrate_old_files, provider_config
 
 
@@ -25,6 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("doctor", help="Check the config, key and hooks")
     d.add_argument("--online", action="store_true", help="Also send a test prompt")
     d.add_argument("--settings", help="Claude Code settings file")
+    update.add_arguments(sub.add_parser(
+        "update", help="Install the newest Baton now"))
     i = sub.add_parser("install", help="Add hooks to ~/.claude/settings.json")
     i.add_argument("--settings", help="Claude Code settings file")
     u = sub.add_parser("uninstall", help="Remove Baton's hooks from ~/.claude/settings.json")
@@ -50,6 +52,7 @@ def main(argv: list | None = None) -> int:
     commands = {
         "setup": setup.run,
         "doctor": doctor.run,
+        "update": update.run,
         "install": _install,
         "uninstall": uninstall.run,
         "status": _status,
