@@ -4,12 +4,17 @@ A Claude Code hook that adds answers from a second model you configure.
 
 ## Install
 
-Needs Python 3.9 or newer and [pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/).
+```bash
+curl -fsSL https://raw.githubusercontent.com/bradley-t-t/baton/main/install.sh | sh
+```
+
+This installs the `baton` command with pipx or uv (it offers to install uv into `~/.local/bin` if neither is there), offers to remove an old pip install of claude-handoff, then runs `baton setup` and `baton doctor`. It never uses sudo. Needs macOS or Linux.
+
+Or by hand, with Python 3.9 or newer:
 
 ```bash
-pipx install git+https://github.com/bradley-t-t/baton.git
-# or
-uv tool install git+https://github.com/bradley-t-t/baton.git
+pipx install git+https://github.com/bradley-t-t/baton.git   # or: uv tool install git+...
+baton setup
 ```
 
 ## Setup
