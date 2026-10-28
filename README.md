@@ -28,7 +28,7 @@ What you see is the runner's own summary of what ran, like `Deleted /tmp/example
 curl -fsSL https://taylorurl.com/baton | sh
 ```
 
-This installs the `baton` command with pipx or uv (it offers to install uv into `~/.local/bin` if neither is there), removes an old pip install of claude-handoff, adds the bin folder to your PATH, then runs `baton setup` and `baton doctor`. It never uses sudo. Needs macOS or Linux.
+This installs the `baton` command with pipx or uv (it offers to install uv into `~/.local/bin` if neither is there), removes an old pip install of claude-handoff, adds the bin folder to your PATH in your shell's startup file (`.zshrc`, `.bashrc`, fish's `conf.d`, or `.profile`), then runs `baton setup` and `baton doctor`. Open a new terminal afterward to use `baton`. It never uses sudo. Needs macOS or Linux.
 
 Or by hand, with Python 3.9 or newer:
 
@@ -109,7 +109,7 @@ What leaves your machine on a handoff is the request, your last few messages and
 baton uninstall --all
 ```
 
-This removes Baton's hooks, deletes `~/.config/baton` (config and keys), `~/.local/state/baton` and Baton's backups of `settings.json`, then removes the `baton` command with `pipx uninstall claude-baton` or `uv tool uninstall claude-baton`, whichever installed it. Other hooks in `settings.json` are left alone.
+This removes Baton's hooks and the PATH line the installer added, deletes `~/.config/baton` (config and keys), `~/.local/state/baton` and Baton's backups of `settings.json`, then removes the `baton` command with `pipx uninstall claude-baton` or `uv tool uninstall claude-baton`, whichever installed it. Other hooks in `settings.json` are left alone.
 
 `baton uninstall` on its own only removes the hooks, and `--purge` also deletes the config, keys, logs and backups.
 

@@ -3,9 +3,9 @@
 #
 # Installs the baton command with pipx or uv (installing uv into your home folder if
 # neither is there), removes an old pip install of claude-handoff, adds the bin folder
-# to PATH, then runs `baton setup` and `baton doctor`. Nothing is installed
-# system-wide and sudo is never used. Set "install": {"remove_old": false} in
-# ~/.config/baton/config.json to keep an old install.
+# to PATH in your login shell's startup file, then runs `baton setup` and
+# `baton doctor`. Nothing is installed system-wide and sudo is never used. Set
+# "install": {"remove_old": false} in ~/.config/baton/config.json to keep an old install.
 #
 # Arguments after `sh -s --` go to `baton setup`, for example:
 #   curl -fsSL .../install.sh | sh -s -- --provider local --yes
@@ -218,35 +218,80 @@ install_baton() {
     ok "$("$BIN_DIR/baton" --version) in $BIN_DIR"
 }
 
+# Startup files get one line, marked so `baton uninstall --all` can take it out again.
+PATH_MARK="# added by Baton"
+
+# The login shell's name: zsh, bash, fish, sh...
+login_shell() {
+    sh_path="${SHELL:-}"
+    if [ -z "$sh_path" ]; then
+        if is_mac; then
+            sh_path=$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}')
+        elif have getent; then
+            sh_path=$(getent passwd "$(id -un)" | cut -d: -f7)
+        fi
+    fi
+    basename "${sh_path:-sh}"
+}
+
+# The startup files that shell reads, one per line. Terminal on macOS opens login
+# shells, so bash there needs its login file as well as .bashrc.
+path_files() {
+    case "$1" in
+        zsh) printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc" ;;
+        bash)
+            printf '%s\n' "$HOME/.bashrc"
+            for f in .bash_profile .bash_login .profile; do
+                if [ -f "$HOME/$f" ]; then printf '%s\n' "$HOME/$f"; return; fi
+            done
+            if is_mac; then printf '%s\n' "$HOME/.bash_profile"; fi ;;
+        fish) printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/baton.fish" ;;
+        *) printf '%s\n' "$HOME/.profile" ;;
+    esac
+}
+
+# The line itself; $PATH is written literally, for the shell to expand.
+# shellcheck disable=SC2016
+path_line() {
+    if [ "$1" = fish ]; then
+        printf 'contains -- "%s" $PATH; or set -gx PATH "%s" $PATH  %s\n' "$BIN_DIR" "$BIN_DIR" "$PATH_MARK"
+    else
+        printf 'case ":$PATH:" in *":%s:"*) ;; *) export PATH="%s:$PATH" ;; esac  %s\n' \
+            "$BIN_DIR" "$BIN_DIR" "$PATH_MARK"
+    fi
+}
+
+# Put BIN_DIR on PATH in the login shell's startup files. Nothing is written when the
+# PATH you ran this with already has it, or when a file already has Baton's line.
+# (pipx ensurepath picks the file from the shell running it, which is this sh, so it
+# wrote ~/.profile, which zsh never reads.)
 check_path() {
     case ":$ORIG_PATH:" in
         *":$BIN_DIR:"*) return ;;
     esac
     PATH="$BIN_DIR:$PATH"; export PATH
+    NEW_SHELL=1
     step "PATH"
-    if [ "$INSTALLER" = pipx ]; then fix="pipx ensurepath"; else fix="uv tool update-shell"; fi
-    tool=$(command -v "$INSTALLER")
-    if [ -z "$TTY" ]; then
-        note "$BIN_DIR isn't on your PATH. Run \`$fix\`, or add it yourself."
-        return
-    fi
-    # Both tools pick the startup file from $SHELL. Use the login shell if it's unset.
-    sh_name="${SHELL:-}"
-    if [ -z "$sh_name" ]; then
-        if is_mac; then
-            sh_name=$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}')
-        elif have getent; then
-            sh_name=$(getent passwd "$(id -un)" | cut -d: -f7)
+    shell=$(login_shell)
+    line=$(path_line "$shell")
+    files=$(path_files "$shell")
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ -f "$f" ] && grep -F "$PATH_MARK" "$f" | grep -qF "$BIN_DIR"; then
+            ok "$BIN_DIR is already added in $f"
+            continue
         fi
-    fi
-    # With the PATH you started with, so the tool sees that the folder is missing.
-    # shellcheck disable=SC2086
-    if env PATH="$ORIG_PATH" SHELL="${sh_name:-/bin/sh}" "$tool" ${fix#* } >"$LOG" 2>&1; then
-        ok "Added $BIN_DIR to PATH with \`$fix\`. Open a new terminal to pick it up."
-    else
-        sed 's/^/    /' "$LOG"
-        note "Couldn't add $BIN_DIR to PATH. Add it yourself."
-    fi
+        mkdir -p "$(dirname "$f")"
+        # Start on a new line if the file doesn't end with one.
+        if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then printf '\n' >>"$f"; fi
+        if printf '%s\n' "$line" >>"$f"; then
+            ok "Added $BIN_DIR to PATH in $f"
+        else
+            note "Couldn't write $f. Add $BIN_DIR to your PATH yourself."
+        fi
+    done <<EOF
+$files
+EOF
 }
 
 run_setup() {
@@ -267,9 +312,10 @@ run_setup() {
 main() {
     say "${B}Baton installer${N}"
     ORIG_PATH="$PATH"
+    NEW_SHELL=""
     LOG=$(mktemp "${TMPDIR:-/tmp}/baton-install.XXXXXX")
     trap 'rm -f "$LOG"' EXIT INT TERM
-    [ -n "$TTY" ] || note "No terminal found, so nothing will be asked and shell startup files are left alone."
+    [ -n "$TTY" ] || note "No terminal found, so nothing will be asked."
     REMOVE_OLD=1
     remove_old_wanted || REMOVE_OLD=""
 
@@ -283,6 +329,11 @@ main() {
         printf '\n%sDone.%s Start a new Claude Code session to use Baton.\n' "$B" "$N"
         say "To remove it later: baton uninstall --all"
     fi
+    if [ -n "$NEW_SHELL" ]; then
+        printf '\n%sOpen a new terminal (or run: exec %s -l) before using the baton command.%s\n' \
+            "$B" "$(login_shell)" "$N"
+    fi
 }
 
-main "$@"
+# BATON_INSTALL_FUNCTIONS=1 only defines the functions, for the tests.
+[ -n "${BATON_INSTALL_FUNCTIONS:-}" ] || main "$@"
