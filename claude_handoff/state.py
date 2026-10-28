@@ -175,3 +175,89 @@ def clear_check_gate(session: str):
     data = load("check_gate.json", {})
     if data.pop(session or "-", None) is not None:
         save("check_gate.json", data)
+
+
+def _fp(text: str) -> str:
+    return hashlib.sha1((text or "").rstrip().encode()).hexdigest()
+
+
+def said_ledger(session: str, turn: str) -> dict:
+    data = load("said.json", {})
+    key = "%s|%s" % (session or "-", turn or "-")
+    rec = data.get(key) or {}
+    return rec if isinstance(rec, dict) else {}
+
+
+def said_once(session: str, turn: str, kind: str, trigger: str) -> bool:
+    """True the first time this kind+trigger is said this turn; False if repeat."""
+    data = load("said.json", {})
+    key = "%s|%s" % (session or "-", turn or "-")
+    rec = dict(data.get(key) or {})
+    marks = list(rec.get(kind) or [])
+    fp = _fp(trigger)
+    if fp in marks:
+        return False
+    marks.append(fp)
+    rec[kind] = marks[-50:]
+    rec["at"] = time.time()
+    data[key] = rec
+    if len(data) > 300:
+        for old in sorted(data, key=lambda k: (data[k] or {}).get("at", 0))[: len(data) - 300]:
+            data.pop(old, None)
+    save("said.json", data)
+    return True
+
+
+def clear_said(session: str):
+    data = load("said.json", {})
+    prefix = "%s|" % (session or "-")
+    changed = False
+    for k in list(data):
+        if k.startswith(prefix):
+            data.pop(k, None)
+            changed = True
+    if changed:
+        save("said.json", data)
+
+
+def refusal_chance(session: str) -> int:
+    return int((load("refusal_chance.json", {}).get(session or "-") or {}).get("n") or 0)
+
+
+def bump_refusal_chance(session: str) -> int:
+    data = load("refusal_chance.json", {})
+    n = int((data.get(session or "-") or {}).get("n") or 0) + 1
+    data[session or "-"] = {"n": n, "at": time.time()}
+    if len(data) > 200:
+        for old in sorted(data, key=lambda k: data[k].get("at", 0))[: len(data) - 200]:
+            data.pop(old, None)
+    save("refusal_chance.json", data)
+    return n
+
+
+def clear_refusal_chance(session: str):
+    data = load("refusal_chance.json", {})
+    if data.pop(session or "-", None) is not None:
+        save("refusal_chance.json", data)
+
+
+def display_buffer_get(session: str, message_id: str) -> str:
+    data = load("display_buf.json", {})
+    return (data.get("%s|%s" % (session or "-", message_id or "")) or {}).get("text") or ""
+
+
+def display_buffer_set(session: str, message_id: str, text: str, final: bool) -> str:
+    data = load("display_buf.json", {})
+    key = "%s|%s" % (session or "-", message_id or "")
+    prev = (data.get(key) or {}).get("text") or ""
+    joined = prev + (text or "")
+    if final:
+        data.pop(key, None)
+    else:
+        data[key] = {"text": joined, "at": time.time()}
+    # prune
+    if len(data) > 100:
+        for old in sorted(data, key=lambda k: data[k].get("at", 0))[: len(data) - 100]:
+            data.pop(old, None)
+    save("display_buf.json", data)
+    return joined

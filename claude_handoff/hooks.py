@@ -1,11 +1,9 @@
 """Claude Code hook entry points.
 
-Claude Code feeds each hook a JSON object on stdin and reads JSON (or nothing) on stdout.
-
-  UserPromptSubmit  -> remember the request AND inject the draft-check step
-  Stop              -> hard gate: every person-facing reply must be check-cleared
-                      or the exact expected handoff replacement; declines/skips
-                      hand off immediately and exact-relay until match.
+  UserPromptSubmit  -> remember the request (no instructions injected)
+  MessageDisplay    -> hide refusals / mismatched relays from the screen
+  Stop              -> first refusal: one chance to do the work; then handoff
+                       + exact-relay until the visible text matches expected
 """
 
 from __future__ import annotations
@@ -13,23 +11,33 @@ from __future__ import annotations
 import json
 import sys
 
-from .check import check_command, check_step_text
 from .config import load as load_config
 from .detect import skipped_check
-from .handoff import matches_expectation, reason, relay_instruction, run, complete, asked
+from .display import on_display
+from .handoff import (
+    asked,
+    complete,
+    matches_expectation,
+    reason,
+    relay_instruction,
+    run,
+)
+from .refusal import REFUSAL_CHANCE
 from .state import (
-    MAX_CHECK_GATE_RETRIES,
-    bump_check_gate,
     bump_expectation_retry,
+    bump_refusal_chance,
     clear_check_gate,
     clear_expectation,
-    get_check_gate,
+    clear_refusal_chance,
+    clear_said,
     get_expectation,
     is_cleared,
     last_request,
     log,
     mark_seen,
     remember_request,
+    refusal_chance,
+    said_once,
     set_expectation,
 )
 from .transcript import last_reply, load as load_transcript, person_messages
@@ -58,14 +66,12 @@ def on_prompt():
     session = data.get("session_id") or ""
     if prompt:
         remember_request(session, str(prompt))
+        clear_refusal_chance(session)
+        clear_said(session)
+        clear_check_gate(session)
         log("prompt session=%s chars=%d" % (session[:8], len(str(prompt))))
-    step = check_step_text()
-    if not step:
-        return None
-    return {"hookSpecificOutput": {
-        "hookEventName": "UserPromptSubmit",
-        "additionalContext": step,
-    }}
+    # No additionalContext: enforcement is MessageDisplay + Stop only.
+    return None
 
 
 def _reply_from(data: dict, entries) -> str:
@@ -75,12 +81,9 @@ def _reply_from(data: dict, entries) -> str:
     return reply or ""
 
 
-def _check_required_reason() -> str:
-    return (
-        "Run claude-handoff-check on your draft before sending. "
-        "Write the draft to a file and run %s <file>; then send only what it tells you."
-        % check_command()
-    )
+def _turn_key(session: str, user: str) -> str:
+    import hashlib
+    return hashlib.sha1(((session or "") + "\0" + (user or "")).encode()).hexdigest()[:16]
 
 
 def _check_expectation(session: str, reply: str):
@@ -91,6 +94,7 @@ def _check_expectation(session: str, reply: str):
     if matches_expectation(reply, expected):
         clear_expectation(session)
         clear_check_gate(session)
+        clear_refusal_chance(session)
         log("relay matched session=%s chars=%d" % (session[:8], len(expected)))
         return None
     retries = int(rec.get("retries") or 0)
@@ -106,7 +110,6 @@ def _check_expectation(session: str, reply: str):
 
 
 def _handoff_now(reply, entries, user, cwd, session, cfg):
-    """Run handoff+actions for an uncleared decline/skip; store exact expected text."""
     r = reason(reply, entries, user, entries, cfg)
     if not r and skipped_check(reply):
         r = {"kind": "decline", "by": "skipped-check"}
@@ -130,6 +133,20 @@ def _handoff_now(reply, entries, user, cwd, session, cfg):
     return {"decision": "block", "reason": relay_instruction(result)}
 
 
+def _first_chance(session: str, user: str, reply: str):
+    """One Stop block telling Claude to do the work; said once per request."""
+    turn = _turn_key(session, user)
+    n = refusal_chance(session)
+    if n >= 1:
+        return None
+    bump_refusal_chance(session)
+    if not said_once(session, turn, "refusal-chance", REFUSAL_CHANCE):
+        # Already said this turn — fall through to handoff.
+        return None
+    log("stop refusal-chance session=%s" % session[:8])
+    return {"decision": "block", "reason": REFUSAL_CHANCE}
+
+
 def on_stop():
     data = _read()
     session = data.get("session_id") or ""
@@ -137,16 +154,13 @@ def on_stop():
     entries = load_transcript(path)
     reply = _reply_from(data, entries)
     cfg = load_config()
-    active = bool(data.get("stop_hook_active"))
 
-    # Exact-relay always wins, including when stop_hook_active.
     if get_expectation(session):
         return _check_expectation(session, reply)
 
     if not cfg.get("enabled", True):
         return None
 
-    # Cleared by draft check → allow.
     if reply and is_cleared(session, reply):
         clear_check_gate(session)
         log("stop cleared-by-check session=%s" % session[:8])
@@ -155,44 +169,34 @@ def on_stop():
     user = last_request(session) or (person_messages(entries)[-1] if person_messages(entries) else "")
     cwd = data.get("cwd") or ""
 
-    # Uncleared decline or "I skipped the check/handoff" → hand off now, exact-relay.
-    if reply and (reason(reply, entries, user, entries, cfg) or skipped_check(reply)):
+    declining = bool(reply and (reason(reply, entries, user, entries, cfg) or skipped_check(reply)))
+    if declining:
+        # First refusal: one chance to do the work. Second (or skip): hand off.
+        chance = _first_chance(session, user, reply)
+        if chance:
+            return chance
         out = _handoff_now(reply, entries, user, cwd, session, cfg)
         if out:
             return out
-        # handoff failed to produce text; fall through to check-required block
 
-    # No person-facing text yet → allow (tool-only turn).
     if not (reply or "").strip():
         return None
 
-    # Uncleared reply: hard-block until Claude runs the check (cap retries).
-    gate = get_check_gate(session)
-    retries = int(gate.get("retries") or 0)
-    if retries >= MAX_CHECK_GATE_RETRIES:
-        clear_check_gate(session)
-        log("stop check-gate gave up session=%s after %d; falling through" % (
-            session[:8], retries))
-        # Last resort: classic decline→handoff path (run() no-ops if not a decline).
-        result = run(reply, entries=entries, user=user, history=entries, cwd=cwd,
-                     session=session, cfg=cfg)
-        if result:
-            set_expectation(session, result)
-            log("stop blocked session=%s chars=%d (exact relay after gate)" % (
-                session[:8], len(result)))
-            return {"decision": "block", "reason": relay_instruction(result)}
-        return None
-
-    bump_check_gate(session)
-    log("stop check-required session=%s retry=%d/%d active=%s" % (
-        session[:8], retries + 1, MAX_CHECK_GATE_RETRIES, active))
-    return {"decision": "block", "reason": _check_required_reason()}
+    # Non-decline uncleared reply: allow (MessageDisplay only hides declines /
+    # mismatched relays). Optional: still run classic handoff if reason fires.
+    result = run(reply, entries=entries, user=user, history=entries, cwd=cwd,
+                 session=session, cfg=cfg)
+    if result:
+        set_expectation(session, result)
+        log("stop blocked session=%s chars=%d (exact relay)" % (session[:8], len(result)))
+        return {"decision": "block", "reason": relay_instruction(result)}
+    return None
 
 
 def main(argv=None):
     argv = list(argv if argv is not None else sys.argv[1:])
     if not argv or argv[0] in ("-h", "--help"):
-        sys.stderr.write("usage: python3 -m claude_handoff.hooks {prompt|stop}\n")
+        sys.stderr.write("usage: python3 -m claude_handoff.hooks {prompt|stop|display}\n")
         return 2
     cmd = argv[0]
     if cmd == "prompt":
@@ -201,6 +205,8 @@ def main(argv=None):
     if cmd == "stop":
         _emit(on_stop())
         return 0
+    if cmd == "display":
+        return on_display()
     sys.stderr.write("unknown hook: %s\n" % cmd)
     return 2
 

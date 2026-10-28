@@ -33,7 +33,7 @@ def hook_command(event: str) -> str:
     when that file exists (API keys), without printing them."""
     root = package_root()
     py = sys.executable or "python3"
-    event_name = "prompt" if event == "UserPromptSubmit" else "stop"
+    event_name = {"UserPromptSubmit": "prompt", "Stop": "stop", "MessageDisplay": "display"}.get(event, "stop")
     run = 'PYTHONPATH="%s" "%s" -m claude_handoff.hooks %s' % (root, py, event_name)
     # Always wrap with a conditional source so install stays idempotent whether or not
     # the secrets file is present yet.
@@ -55,7 +55,10 @@ def _is_ours(entry) -> bool:
 
 
 def _ours_entry(event: str) -> dict:
-    return {"hooks": [{"type": "command", "command": hook_command(event)}]}
+    h = {"type": "command", "command": hook_command(event)}
+    if event == "MessageDisplay":
+        h["timeout"] = 10
+    return {"hooks": [h]}
 
 
 def _load(path: Path) -> dict:
@@ -80,7 +83,7 @@ def install(path: Path = None) -> Path:
     path = path or settings_path()
     data = _load(path)
     hooks = data.setdefault("hooks", {})
-    for event in ("UserPromptSubmit", "Stop"):
+    for event in ("UserPromptSubmit", "Stop", "MessageDisplay"):
         lst = [e for e in (hooks.get(event) or []) if not _is_ours(e)]
         lst.append(_ours_entry(event))
         hooks[event] = lst

@@ -137,6 +137,14 @@ Everything is mocked, so no network is needed.
 
 Built with Python, using only the standard library.
 
+
+<details>
+<summary>Hiding refusals on screen</summary>
+
+Claude Code's `MessageDisplay` hook can replace what is drawn without changing the transcript. claude-handoff uses it the way Ratchet did: a refusal or a narrating relay is replaced with a zero-width space so it never shows; only the final `<result>\n(via Grok)` is drawn. Stop still cannot unshow text that already streamed before the hook ran.
+
+</details>
+
 <details>
 <summary>License</summary>
 

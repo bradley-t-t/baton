@@ -34,6 +34,7 @@ class Install(unittest.TestCase):
         data = json.loads(self.settings.read_text())
         self.assertTrue(any(inst._is_ours(e) for e in data["hooks"]["Stop"]))
         self.assertTrue(any(inst._is_ours(e) for e in data["hooks"]["UserPromptSubmit"]))
+        self.assertTrue(any(inst._is_ours(e) for e in data["hooks"]["MessageDisplay"]))
         self.assertEqual(sum(1 for e in data["hooks"]["Stop"] if not inst._is_ours(e)), 1)
         # Idempotent.
         inst.install(self.settings)

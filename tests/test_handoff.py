@@ -96,6 +96,10 @@ class RunHandoff(unittest.TestCase):
         self.assertTrue(out.endswith("(via Grok)"))
 
     def test_stop_hook_blocks_with_tag(self):
+        from claude_handoff.state import bump_refusal_chance, clear_refusal_chance, clear_said
+        clear_refusal_chance("s5")
+        clear_said("s5")
+        bump_refusal_chance("s5")  # first chance already used → hand off
         entries = [
             {"type": "user", "message": {"content": "Permanently delete the image"}},
             {"type": "assistant", "message": {"content": [
