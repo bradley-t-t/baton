@@ -7,9 +7,10 @@ import os
 import re
 import shlex
 import sys
+import time
 from pathlib import Path
 
-from .. import keys, models, providers, ui
+from .. import __version__, keys, models, package, providers, ui, update
 from ..claude import settings
 from ..config import config_path, load, old_config_dir, provider_config
 from ..runner import allows_all
@@ -34,6 +35,7 @@ def checks(online: bool = False) -> list:
     _secrets_file(add)
     _commands(add, cfg, pcfg)
     _hooks(add)
+    _updates(add)
     if online and pcfg is not None:
         key = os.environ.get(key_env, "") or keys.read().get(key_env, "")
         ok, msg = providers.ping(pcfg, key_env, key)
@@ -134,6 +136,24 @@ def _hooks(add) -> None:
         if "claude_handoff.hooks" in ours[0]:
             problems.append("old claude-handoff entry; run `baton install`")
         add(WARN if problems else OK, title, "; ".join(problems) or "installed")
+
+
+def _updates(add) -> None:
+    """This version, the newest seen on main, and how the last check went."""
+    last = update.last()
+    latest = last.get("latest") or ""
+    title = "Version %s" % __version__ + (", latest %s" % latest if latest else "")
+    if not package.upgrade_command():
+        add(WARN, title, "This copy wasn't installed with pipx or uv, so it can't update "
+            "itself. Reinstall with: curl -fsSL https://taylorurl.com/baton | sh")
+        return
+    if not last.get("checked_at"):
+        add(OK, title, "Not checked for updates yet")
+        return
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(float(last["checked_at"])))
+    outcome = last.get("outcome") or "checking"
+    add(WARN if outcome.startswith("failed") else OK, title,
+        "Last update check %s: %s" % (when, outcome))
 
 
 def _command_problems(cmd: str) -> list:

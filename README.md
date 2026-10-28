@@ -69,6 +69,10 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 
 `baton doctor --online` also sends a test prompt.
 
+## Updates
+
+Baton keeps itself up to date. About once a day a hook starts a background check of the version on `main`, and if it's newer, reinstalls with pipx or uv, whichever installed it. Hooks never wait on it. `baton update` does it now, `baton update --check` only looks, and `baton doctor` shows the last check.
+
 ## Config
 
 `~/.config/baton/config.json`. `setup` writes it, and you can edit it by hand.

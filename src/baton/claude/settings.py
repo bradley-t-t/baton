@@ -115,13 +115,16 @@ def _write(path: Path, data: dict) -> None:
 
 
 def install(path: Path | None = None) -> Path:
-    """Add our hooks, replacing any earlier Baton or claude-handoff ones."""
+    """Add our hooks, replacing any earlier Baton or claude-handoff ones. The file is
+    left alone when they're already there as they'd be written."""
     path = path or settings_path()
     data = read(path)
+    before = json.dumps(data, sort_keys=True)
     hooks = data.setdefault("hooks", {})
     for event in EVENTS:
         hooks[event] = [e for e in (hooks.get(event) or []) if not is_ours(e)] + [hook_entry(event)]
-    _write(path, data)
+    if not path.exists() or json.dumps(data, sort_keys=True) != before:
+        _write(path, data)
     return path
 
 

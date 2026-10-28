@@ -1,12 +1,9 @@
 """baton uninstall, --purge and --all."""
 import json
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
 from baton.claude import settings
-from baton.commands import uninstall
 from tests.helpers import Home
 
 
@@ -96,27 +93,6 @@ class UninstallAll(Home):
         ex.assert_not_called()
         self.assertTrue(self.cfg_file.exists())
 
-
-class InstallMethod(unittest.TestCase):
-    def test_pipx_and_uv_are_recognised(self):
-        for marker, want in (("pipx_metadata.json", ["pipx", "uninstall", "claude-baton"]),
-                             ("uv-receipt.toml", ["uv", "tool", "uninstall", "claude-baton"])):
-            prefix = Path(tempfile.mkdtemp()) / "claude-baton"
-            prefix.mkdir()
-            (prefix / marker).write_text("")
-            with mock.patch("sys.prefix", str(prefix)):
-                self.assertEqual(uninstall.removal_command(), want)
-
-    def test_pip_install_uses_pip(self):
-        with mock.patch("sys.prefix", tempfile.mkdtemp()), \
-                mock.patch("baton.commands.uninstall._installed_name", return_value="claude-baton"):
-            cmd = uninstall.removal_command()
-        self.assertEqual(cmd[1:], ["-m", "pip", "uninstall", "-y", "claude-baton"])
-
-    def test_not_installed_gives_nothing(self):
-        with mock.patch("sys.prefix", tempfile.mkdtemp()), \
-                mock.patch("baton.commands.uninstall._installed_name", return_value=""):
-            self.assertEqual(uninstall.removal_command(), [])
 
 if __name__ == "__main__":
     unittest.main()

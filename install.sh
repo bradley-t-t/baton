@@ -200,6 +200,7 @@ source_url() {
     fi
 }
 
+# baton/package.py runs these same install commands when Baton updates itself.
 install_baton() {
     url=$(source_url)
     step "Installing Baton"
