@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -15,8 +16,15 @@ from pathlib import Path
 MARKERS = ("-m baton.hooks", "-m claude_handoff.hooks")
 
 
+EVENTS = ("UserPromptSubmit", "Stop", "MessageDisplay")
+
+
 def package_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def example_config_path() -> Path:
+    return Path(__file__).resolve().parent / "config.example.json"
 
 
 def settings_path() -> Path:
@@ -79,11 +87,55 @@ def _load(path: Path) -> dict:
         return {}
 
 
+KEEP_BACKUPS = 3
+BACKUP_NAME = re.compile(r"\.bak-\d{8}-\d{6}$")
+
+
+def backups(path: Path = None) -> list:
+    """The settings backups Baton made, oldest first."""
+    path = path or settings_path()
+    if not path.parent.is_dir():
+        return []
+    return sorted(q for q in path.parent.glob(path.name + ".bak-*")
+                  if BACKUP_NAME.search(q.name) and q.is_file())
+
+
+def removal_command() -> list:
+    """The command that removes the installed baton package, for how it was installed."""
+    import sys
+    prefix = Path(sys.prefix)
+    if (prefix / "pipx_metadata.json").exists():
+        return ["pipx", "uninstall", prefix.name]
+    if (prefix / "uv-receipt.toml").exists():
+        return ["uv", "tool", "uninstall", prefix.name]
+    name = _installed_name()
+    if name:
+        return [sys.executable, "-m", "pip", "uninstall", "-y", name]
+    return []
+
+
+def _installed_name() -> str:
+    try:
+        from importlib import metadata
+    except ImportError:  # pragma: no cover
+        return ""
+    for name in ("claude-baton", "baton", "claude-handoff"):
+        try:
+            eps = metadata.distribution(name).entry_points
+        except Exception:
+            continue
+        if any(ep.value.startswith(("baton.", "claude_handoff.")) for ep in eps):
+            return name
+    return ""
+
+
 def _save(path: Path, data: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         backup = path.with_suffix(path.suffix + ".bak-%s" % time.strftime("%Y%m%d-%H%M%S"))
         shutil.copy2(path, backup)
+        for old in backups(path)[:-KEEP_BACKUPS]:
+            old.unlink()
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n")
     os.replace(tmp, path)
@@ -93,7 +145,7 @@ def install(path: Path = None) -> Path:
     path = path or settings_path()
     data = _load(path)
     hooks = data.setdefault("hooks", {})
-    for event in ("UserPromptSubmit", "Stop", "MessageDisplay"):
+    for event in EVENTS:
         lst = [e for e in (hooks.get(event) or []) if not _is_ours(e)]
         lst.append(_ours_entry(event))
         hooks[event] = lst
@@ -104,7 +156,7 @@ def install(path: Path = None) -> Path:
     cfg = config_path()
     if not cfg.exists():
         cfg.parent.mkdir(parents=True, exist_ok=True)
-        example = package_root() / "config.example.json"
+        example = example_config_path()
         if example.exists():
             shutil.copy2(example, cfg)
         else:
@@ -165,9 +217,36 @@ def uninstall(path: Path = None) -> Path:
         else:
             hooks.pop(event, None)
     if changed:
-        data["hooks"] = hooks
+        if hooks:
+            data["hooks"] = hooks
+        else:
+            data.pop("hooks", None)
         _save(path, data)
     return path
+
+
+def data_paths() -> list:
+    """Baton's own config and state folders, plus claude-handoff's if they're still there."""
+    from .config import config_dir, old_config_dir, state_dir
+    home_state = Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state"))
+    out = []
+    for p in (config_dir(), state_dir(), old_config_dir(), home_state / "claude-handoff"):
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def purge(paths=None) -> list:
+    """Delete the folders from data_paths() that exist. Returns what was removed."""
+    removed = []
+    for p in paths if paths is not None else data_paths():
+        if p.is_dir() and not p.is_symlink():
+            shutil.rmtree(p)
+            removed.append(str(p))
+        elif p.exists() or p.is_symlink():
+            p.unlink()
+            removed.append(str(p))
+    return removed
 
 
 def status(path: Path = None) -> dict:

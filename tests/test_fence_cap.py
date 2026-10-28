@@ -34,7 +34,7 @@ class Cap(unittest.TestCase):
 
     def test_default_cap_is_20(self):
         self.assertEqual(config.DEFAULTS["run_actions"]["max_commands"], 20)
-        example = json.loads((inst.package_root() / "config.example.json").read_text())
+        example = json.loads(inst.example_config_path().read_text())
         self.assertEqual(example["run_actions"]["max_commands"], 20)
 
     def test_eight_commands_run_under_default(self):
@@ -172,7 +172,7 @@ class OldNames(unittest.TestCase):
     def test_install_migrates_and_replaces_old_hooks(self):
         old_dir = Path(self.home) / "claude-handoff"
         old_dir.mkdir()
-        example = json.loads((inst.package_root() / "config.example.json").read_text())
+        example = json.loads(inst.example_config_path().read_text())
         example["run_actions"]["max_commands"] = 5
         (old_dir / "config.json").write_text(json.dumps(example))
         (old_dir / "secrets.env").write_text("XAI_API_KEY=x\n")
