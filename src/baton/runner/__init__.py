@@ -9,7 +9,7 @@ the allow list unless run_actions.allow is "all", and run_actions.max_commands c
 how many there are. A block that fails a check is not run at all.
 
 What the person sees afterwards is what the script printed, or, when it printed
-nothing, the sentence the provider wrote about it.
+nothing, the sentence the provider wrote about it, put in the past tense.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from .. import keys, system
 from ..state import log
 from .shell import (extract_fences, first_word, logical_lines, script_commands, strip_fences,
                     writes_file)
+from .wording import finished
 
 ALL = "all"
 # How each shell's script file starts: stop at the first failing command.
@@ -114,12 +115,12 @@ def script_env(cfg: dict) -> dict:
 
 def result_line(stdout: str, prose: str) -> str:
     """What to show for a script that worked: what it printed, else the provider's own
-    sentence about it, else a plain "Done."."""
+    sentence about it, reworded to read as done, else a plain "Done."."""
     out = (stdout or "").strip()
     if out:
         return out[:MAX_RESULT_CHARS]
-    prose = (prose or "").strip()
-    if prose and len(prose) <= MAX_RESULT_CHARS and not prose.lower().startswith("sure"):
+    prose = finished(prose)
+    if prose and len(prose) <= MAX_RESULT_CHARS:
         return prose
     return "Done."
 
