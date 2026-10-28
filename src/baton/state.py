@@ -29,7 +29,7 @@ def log(msg: str) -> None:
 
 def _load(name: str) -> dict:
     try:
-        data = json.loads((state_dir() / name).read_text())
+        data = json.loads((state_dir() / name).read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -39,7 +39,7 @@ def _save(name: str, data: dict) -> None:
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / (name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     os.replace(tmp, d / name)
 
 

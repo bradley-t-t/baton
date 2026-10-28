@@ -1,5 +1,6 @@
 """runner.summary: what a script did, in plain sentences."""
 import unittest
+from os.path import join
 
 from baton.runner.summary import clean_prose, describe, failure_line, outcome
 
@@ -7,9 +8,9 @@ from baton.runner.summary import clean_prose, describe, failure_line, outcome
 class Summary(unittest.TestCase):
     def test_outcome_reads_each_part_of_a_chain(self):
         o = outcome(["rm f && ls dir | grep f || echo ok", "mkdir -p d", "mv a b"], cwd="/w")
-        self.assertEqual(o["deleted"], ["/w/f"])
-        self.assertEqual(o["created"], ["/w/d"])
-        self.assertEqual(o["moved"], [("/w/a", "/w/b")])
+        self.assertEqual(o["deleted"], [join("/w", "f")])
+        self.assertEqual(o["created"], [join("/w", "d")])
+        self.assertEqual(o["moved"], [(join("/w", "a"), join("/w", "b"))])
 
     def test_prose_shell_lines_dropped(self):
         self.assertEqual(clean_prose("rm -f x && ls y | grep x || echo ok\nAll set."), "All set.")

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sys
 
-from .. import update
+from .. import keys, update
 from .display import on_display
 from .prompt import on_prompt
 from .stop import on_stop
@@ -32,6 +32,12 @@ def main(argv: list | None = None) -> int:
     if hook is None:
         sys.stderr.write("unknown hook: %s\n" % argv[0])
         return 2
+    # Claude Code speaks UTF-8 JSON; Windows would otherwise use its ANSI code page.
+    for stream in (sys.stdin, sys.stdout):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    # The POSIX hook command sources secrets.env first; the Windows one has no shell.
+    keys.load_into_env()
     try:
         return hook()
     finally:

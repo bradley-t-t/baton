@@ -8,7 +8,7 @@ import re
 import shlex
 from pathlib import Path
 
-FENCE = re.compile(r"```(?:bash|sh|shell|zsh|fish)\s*\n(.*?)```", re.S | re.I)
+FENCE = re.compile(r"```(?:bash|sh|shell|zsh|fish|powershell|pwsh|ps1)\s*\n(.*?)```", re.S | re.I)
 BARE_FENCE = re.compile(r"```\s*\n(.*?)```", re.S)
 
 PREFIXES = {"sudo", "command", "time", "nice", "nohup", "env"}
@@ -22,7 +22,7 @@ KEYWORDS = {
 
 
 def extract_fences(text: str) -> list:
-    """Bodies of bash/sh fenced blocks (prefer tagged fences; else bare)."""
+    """Bodies of shell fenced blocks (prefer tagged fences; else bare)."""
     blocks = list(FENCE.finditer(text or ""))
     if not blocks:
         blocks = list(BARE_FENCE.finditer(text or ""))

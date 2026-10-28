@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .. import package, ui, update
+from .. import package, system, ui, update
 
 
 def add_arguments(p) -> None:
@@ -22,7 +22,7 @@ def run(args) -> int:
         return _auto()
     if not args.check and not package.upgrade_command():
         print("This copy of Baton wasn't installed with pipx or uv, so it can't update itself.\n"
-              "Reinstall with: curl -fsSL https://taylorurl.com/baton | sh", file=sys.stderr)
+              "Reinstall with: " + package.install_command(), file=sys.stderr)
         return 1
     try:
         result = update.update(check_only=args.check)
@@ -33,7 +33,10 @@ def run(args) -> int:
         print(ui.red("Update failed: %s: %s" % (type(e).__name__, e)), file=sys.stderr)
         return 1
     current, latest = result["current"], result["latest"]
-    if result["upgraded"]:
+    if result["upgraded"] and system.windows():
+        print(ui.green("Updating") + " Baton %s -> %s. It finishes a few seconds after this "
+              "command exits; then start a new Claude Code session." % (current, latest))
+    elif result["upgraded"]:
         print(ui.green("Updated") + " Baton %s -> %s. Start a new Claude Code session to use it."
               % (current, latest))
     elif update.is_newer(latest, current):

@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 
 from baton.claude import settings
-from tests.helpers import Home
+from tests.helpers import Home, posix_only
 
 
 class Uninstall(Home):
@@ -55,7 +55,7 @@ class UninstallAll(Home):
     def setUp(self):
         super().setUp()
         self.cli("setup", "--provider", "local", "--yes", "--no-test")
-        self.remove = mock.patch("baton.commands.uninstall.removal_command",
+        self.remove = mock.patch("baton.package.removal_command",
                                  return_value=["pipx", "uninstall", "claude-baton"])
         self.remove.start()
 
@@ -69,6 +69,7 @@ class UninstallAll(Home):
         self.assertIn("To remove the baton command too: pipx uninstall claude-baton", out)
         self.assertIn("baton uninstall --all", out)
 
+    @posix_only
     def test_all_removes_everything_then_the_package(self):
         with mock.patch("shutil.which", return_value="/usr/bin/pipx"), \
                 mock.patch("os.execvp") as ex:

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from baton.runner import allows_all, limits_note, max_commands, run_reply
-from tests.helpers import ALLOW, run_actions
+from tests.helpers import ALLOW, posix_only, run_actions
 
 
 def eight(d):
@@ -15,6 +15,7 @@ def eight(d):
     return "```bash\n" + lines + "```\n"
 
 
+@posix_only  # the scripts name absolute POSIX paths
 class Run(unittest.TestCase):
     def test_allowlist_rejects(self):
         cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "max_commands": 2,
@@ -90,6 +91,7 @@ class Run(unittest.TestCase):
         self.assertEqual(out["summary"], "")
 
 
+@posix_only
 class CleanResult(unittest.TestCase):
     """The shown result is plain sentences about effects, never command text."""
 
@@ -149,6 +151,7 @@ class CleanResult(unittest.TestCase):
         self.assertEqual(out["summary"], "Nothing to delete: %s was already gone." % f)
 
 
+@posix_only
 class Cap(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.mkdtemp()
@@ -217,7 +220,7 @@ class ReadOnly(unittest.TestCase):
 
     def test_reading_and_dev_null_are_fine(self):
         d = tempfile.mkdtemp()
-        out = run_reply("```bash\nls %s 2>/dev/null\ncat < /dev/null 2>&1\n```" % d,
+        out = run_reply("```bash\nls . 2>/dev/null\ncat < /dev/null 2>&1\n```",
                                   self.CFG, "xai", cwd=d)
         self.assertTrue(out["ok"], out["summary"])
 

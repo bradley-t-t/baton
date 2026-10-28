@@ -1,5 +1,7 @@
 """`baton uninstall`: remove the hooks, and with --purge or --all, Baton's files. --all
-also removes the PATH line install.sh added and the baton command itself."""
+also removes the PATH entry the installer added and the baton command itself. On Windows
+the command is removed just after this process exits, since Windows won't delete a
+running program."""
 
 from __future__ import annotations
 
@@ -9,16 +11,15 @@ import shutil
 import sys
 from pathlib import Path
 
-from .. import ui
+from .. import package, system, ui
 from ..claude import settings
 from ..config import config_dir, old_config_dir, state_dir
-from ..package import remove_path_lines, removal_command
+
 
 def data_paths() -> list:
     """Baton's own config and state folders, plus claude-handoff's if they're still there."""
-    home_state = Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state"))
     out = []
-    for p in (config_dir(), state_dir(), old_config_dir(), home_state / "claude-handoff"):
+    for p in (config_dir(), state_dir(), old_config_dir(), system.state_home() / "claude-handoff"):
         if p not in out:
             out.append(p)
     return out
@@ -39,7 +40,7 @@ def purge(paths: list) -> list:
 
 
 def run(args) -> int:
-    remove = removal_command()
+    remove = package.removal_command()
     remove_text = " ".join(shlex.quote(x) for x in remove)
 
     path = settings.uninstall()
@@ -49,7 +50,8 @@ def run(args) -> int:
         if rc is not None:
             return rc
     else:
-        print("Config and keys are still in ~/.config/baton. `baton uninstall --purge` deletes them.")
+        print("Config and keys are still in %s. `baton uninstall --purge` deletes them."
+              % config_dir())
 
     if not remove:
         return 0
@@ -57,7 +59,8 @@ def run(args) -> int:
         print("To remove the baton command too: %s" % remove_text)
         print("Or run `baton uninstall --all` to do everything in one step.")
         return 0
-    if not shutil.which(remove[0]):
+    program = shutil.which(remove[0]) or package.tool(remove[0])
+    if not program:
         _remove_path_lines()
         print("Last step, remove the baton command: %s" % remove_text)
         return 0
@@ -65,6 +68,10 @@ def run(args) -> int:
         print("Kept it. To remove it later: %s" % remove_text)
         return 0
     _remove_path_lines()
+    if system.windows():
+        system.run_after_exit([[program] + remove[1:]])
+        print("Removing the baton command in a few seconds: %s" % remove_text)
+        return 0
     print("Running: %s" % remove_text)
     sys.stdout.flush()
     sys.stderr.flush()
@@ -73,8 +80,8 @@ def run(args) -> int:
 
 
 def _remove_path_lines() -> None:
-    for f in remove_path_lines():
-        print("Removed Baton's PATH line from %s" % f)
+    for f in package.remove_path_lines():
+        print("Removed the PATH entry Baton added in %s" % f)
 
 
 def _purge(settings_file: Path, yes: bool) -> int | None:

@@ -1,7 +1,9 @@
 """Run the shell block a provider's answer holds.
 
 The provider is asked for one ```bash or ```sh fence. Its body runs verbatim as a temp
-script with bash, in the Claude session's cwd, without API keys in its environment.
+script with bash, in the Claude session's cwd, without API keys in its environment. On
+Windows that bash is Git Bash; without Git Bash the provider is asked for a
+```powershell fence instead, and PowerShell runs it.
 Every simple command (each part of a chain, pipe, loop body or $(...)) has to be on
 the allow list unless run_actions.allow is "all", and run_actions.max_commands caps
 how many there are. A block that fails a check is not run at all.
@@ -14,12 +16,16 @@ import subprocess
 import tempfile
 import time
 
-from .. import keys
+from .. import keys, system
 from ..state import log
 from .shell import extract_fences, first_word, logical_lines, script_commands, strip_fences, writes_file
 from .summary import GLOB, describe, failure_line, outcome, still_there
 
 ALL = "all"
+# How each shell's script file starts: stop at the first failing command.
+SCRIPT_HEADER = {"bash": "#!/usr/bin/env bash\nset -e\n",
+                 "powershell": "$ErrorActionPreference = 'Stop'\n"}
+SCRIPT_SUFFIX = {"bash": ".sh", "powershell": ".ps1"}
 DEFAULT_MAX_COMMANDS = 20
 KEY_NAMES = ("XAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN",
              "BATON_TOKEN", "CLAUDE_HANDOFF_TOKEN")
@@ -65,15 +71,31 @@ def limits_note(cfg: dict, provider_name: str) -> str:
         return ""
     extra = " Writing to files with > or >> is not allowed." if ra.get("read_only") else ""
     if every:
-        return ("Runner limits: the block may have at most %d commands, counting each "
-                "command in a chain, pipe or loop body. A block over the limit is not run "
-                "at all. When the same command repeats, use one for-loop instead of a line "
-                "per item.%s" % (max_commands(cfg), extra))
-    return ("Runner limits: the block may have at most %d commands, counting each "
-            "command in a chain, pipe or loop body, and each command has to be one of: %s. A block over "
-            "the limit or with any other command is not run at all. When the same "
-            "command repeats, use one for-loop instead of a line per item.%s"
-            % (max_commands(cfg), ", ".join(sorted(allow)), extra))
+        limits = ("Runner limits: the block may have at most %d commands, counting each "
+                  "command in a chain, pipe or loop body. A block over the limit is not run "
+                  "at all. When the same command repeats, use one for-loop instead of a line "
+                  "per item.%s" % (max_commands(cfg), extra))
+    else:
+        limits = ("Runner limits: the block may have at most %d commands, counting each "
+                  "command in a chain, pipe or loop body, and each command has to be one of: "
+                  "%s. A block over the limit or with any other command is not run at all. "
+                  "When the same command repeats, use one for-loop instead of a line per "
+                  "item.%s" % (max_commands(cfg), ", ".join(sorted(allow)), extra))
+    return " ".join(n for n in (shell_note(), limits) if n)
+
+
+def shell_note() -> str:
+    """What the provider needs to know about the shell on Windows; empty elsewhere."""
+    if not system.windows():
+        return ""
+    python = system.python_command()
+    run_python = "" if python == "python3" else " Run Python as %s, not python3." % python
+    if system.script_shell() == "bash":
+        return ("This computer runs Windows. The block runs in Git Bash, so ~ is the home "
+                "folder and paths take forward slashes: C:\\Users is /c/Users." + run_python)
+    return ("This computer runs Windows without bash. Tag the block powershell instead of "
+            "bash: it runs as a PowerShell script, so use PowerShell commands such as "
+            "New-Item, Set-Content, Get-ChildItem and Remove-Item." + run_python)
 
 
 def script_env(cfg: dict) -> dict:
@@ -145,16 +167,19 @@ def _run_script(body: str, lines: list, text: str, cfg: dict, workdir: str, time
     started = time.monotonic()
     path = None
     try:
-        fd, path = tempfile.mkstemp(prefix="baton-", suffix=".sh")
-        with os.fdopen(fd, "w") as f:
+        shell = system.script_shell()
+        fd, path = tempfile.mkstemp(prefix="baton-", suffix=SCRIPT_SUFFIX[shell])
+        # Windows PowerShell reads a file without a byte order mark as ANSI.
+        with os.fdopen(fd, "w", encoding="utf-8-sig" if shell == "powershell" else "utf-8") as f:
             # The body runs verbatim so quotes, loops and python -c stay intact.
-            f.write("#!/usr/bin/env bash\nset -e\n" + body + ("" if body.endswith("\n") else "\n"))
+            f.write(SCRIPT_HEADER[shell] + body + ("" if body.endswith("\n") else "\n"))
         os.chmod(path, 0o700)
-        p = subprocess.run(["bash", path], capture_output=True, text=True, timeout=timeout,
-                           cwd=workdir, env=script_env(cfg))
+        p = subprocess.run(system.script_command(path), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout, cwd=workdir,
+                           env=script_env(cfg))
         output = ((p.stdout or "") + (("\n" + p.stderr) if p.stderr else ""))[:8000]
-        output = "$ bash <fence script>\nexit %s (%.1fs)\n%s" % (
-            p.returncode, time.monotonic() - started, output)
+        output = "$ %s <fence script>\nexit %s (%.1fs)\n%s" % (
+            shell, p.returncode, time.monotonic() - started, output)
         log("run_actions script %d lines -> %s" % (len(lines), p.returncode))
         if p.returncode != 0:
             return _result(True, False, failure_line(p.stderr or p.stdout, p.returncode), output)
