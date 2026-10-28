@@ -2,7 +2,7 @@
 hooks.
 
 It only asks for the provider, the server URL (local only) and the API key. The model,
-commands, auto-update and the rest come from ~/.config/baton/config.json: the defaults on a first
+commands and the rest come from ~/.config/baton/config.json: the defaults on a first
 run, and whatever is in the file after that, so hand edits are kept. --model,
 --commands, --allow and --reset change them. Every prompt has a flag, so the same steps
 run unattended with --yes.
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .. import keys, models, ui
 from ..claude import settings
-from ..config import DEFAULTS, config_dir, config_path, env, example_config_path, migrate_old_files
+from ..config import config_dir, config_path, env, example_config_path, migrate_old_files
 from ..providers import ping
 from ..runner import allows_all
 
@@ -60,7 +60,7 @@ def add_arguments(p) -> None:
                    help="on: any command (the default); off; read-only; or custom with --allow")
     p.add_argument("--allow", help="Comma-separated commands for --commands custom")
     p.add_argument("--reset", action="store_true",
-                   help="Put the model, commands and auto-update back to the defaults")
+                   help="Put the model and commands back to the defaults")
     p.add_argument("--no-test", action="store_true", help="Skip the connection test")
     p.add_argument("--settings", help="Claude Code settings file "
                                       "(default ~/.claude/settings.json)")
@@ -179,8 +179,6 @@ def _run(args) -> int:
     new_raw.setdefault("enabled", True)
     new_raw.setdefault("providers", {})[name] = pcfg
     new_raw["run_actions"] = ra
-    if args.reset or not isinstance(new_raw.get("auto_update"), dict):
-        new_raw["auto_update"] = copy.deepcopy(DEFAULTS["auto_update"])
     _review(spec, name, pcfg, resolved, ra, mode, cfg_file, key and key_env, settings_file)
 
     if args.dry_run:

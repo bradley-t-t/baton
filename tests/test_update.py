@@ -1,17 +1,15 @@
 """Auto-update: version checks, when a check is due, the background start, the lock,
 and what an update runs and records."""
 import io
-import json
 import subprocess
 import time
 import unittest
 from unittest import mock
 
 from baton import update
-from baton.config import load, state_dir
+from baton.config import state_dir
 from tests.helpers import Home
 
-ON = {"auto_update": {"enabled": True, "interval_hours": 24}}
 UPGRADE = ["/bin/uv", "tool", "install", "--force", "--reinstall", "git+x@main"]
 
 
@@ -46,14 +44,6 @@ class Versions(unittest.TestCase):
                 update.latest_version()
 
 
-class Options(unittest.TestCase):
-    def test_defaults_and_bad_values(self):
-        self.assertEqual(update.options({}), {"enabled": True, "interval_hours": 24.0})
-        self.assertFalse(update.options({"auto_update": {"enabled": False}})["enabled"])
-        self.assertEqual(update.options({"auto_update": {"interval_hours": "x"}})["interval_hours"], 24.0)
-        self.assertEqual(update.options({"auto_update": {"interval_hours": 0}})["interval_hours"], 1.0)
-
-
 class Due(Home):
     def setUp(self):
         super().setUp()
@@ -62,24 +52,19 @@ class Due(Home):
         self.addCleanup(self.how.stop)
 
     def test_due_once_per_interval(self):
-        self.assertTrue(update.due(ON))
+        self.assertTrue(update.due())
         update._record(checked_at=time.time())
-        self.assertFalse(update.due(ON))
-        self.assertTrue(update.due(ON, now=time.time() + 24 * 3600 + 1))
+        self.assertFalse(update.due())
+        self.assertTrue(update.due(now=time.time() + 24 * 3600 + 1))
 
-    def test_never_when_off_or_not_pipx_or_uv(self):
-        self.assertFalse(update.due({"auto_update": {"enabled": False}}))
+    def test_never_when_not_installed_with_pipx_or_uv(self):
         with mock.patch("baton.package.installer", return_value=""):
-            self.assertFalse(update.due(ON))
-
-    def test_env_turns_it_off(self):
-        with mock.patch.dict("os.environ", {"BATON_AUTO_UPDATE": "0"}):
-            self.assertFalse(update.due(load()))
+            self.assertFalse(update.due())
 
     def test_start_spawns_detached_once(self):
         with mock.patch("subprocess.Popen") as popen:
-            self.assertTrue(update.start_if_due(ON))
-            self.assertFalse(update.start_if_due(ON))
+            self.assertTrue(update.start_if_due())
+            self.assertFalse(update.start_if_due())
         popen.assert_called_once()
         args, kw = popen.call_args
         self.assertEqual(args[0][1:], ["-m", "baton", "update", "--auto"])
@@ -89,13 +74,8 @@ class Due(Home):
 
     def test_start_never_raises(self):
         with mock.patch("subprocess.Popen", side_effect=OSError("no fork")):
-            self.assertFalse(update.start_if_due(ON))
+            self.assertFalse(update.start_if_due())
         self.assertIn("couldn't start", (state_dir() / "handoff.log").read_text())
-
-    def test_disabled_never_spawns(self):
-        with mock.patch("subprocess.Popen") as popen:
-            self.assertFalse(update.start_if_due({"auto_update": {"enabled": False}}))
-        popen.assert_not_called()
 
     def test_hooks_start_a_check(self):
         from baton import hooks
@@ -145,6 +125,8 @@ class Update(Home):
             r = update.update(check_only=True)
         run.assert_not_called()
         self.assertEqual(r["outcome"], "99.0.0 is available")
+        with mock.patch("baton.package.installer", return_value="uv"):
+            self.assertTrue(update.due())
 
     def test_failed_install_is_recorded_and_not_retried(self):
         with mock.patch("subprocess.run", return_value=done(1, "boom")), \
@@ -152,7 +134,7 @@ class Update(Home):
             with self.assertRaises(RuntimeError):
                 update.update()
             self.assertIn("uv exited 1: boom", update.last()["outcome"])
-            self.assertFalse(update.due(ON))
+            self.assertFalse(update.due())
 
     def test_offline_is_recorded(self):
         with mock.patch("baton.update.latest_version", side_effect=OSError("offline")):
@@ -196,32 +178,21 @@ class Command(Home):
             rc, out = self.cli("update", "--auto")
         self.assertEqual((rc, out), (0, ""))
 
-    def test_doctor_shows_status(self):
+    def test_doctor_shows_versions_and_the_last_check(self):
         _, out = self.cli("doctor")
-        self.assertIn("Auto-update", out)
-        self.cfg_file.parent.mkdir(parents=True, exist_ok=True)
-        self.cfg_file.write_text(json.dumps({"auto_update": {"enabled": False}}))
-        _, out = self.cli("doctor")
-        self.assertIn("Off (auto_update.enabled is false)", out)
-        update._record(checked_at=time.time(), outcome="failed: OSError: offline")
+        self.assertIn("Version %s" % update.__version__, out)
+        self.assertIn("can't update itself", out)
         with mock.patch("baton.package.upgrade_command", return_value=UPGRADE):
-            self.cfg_file.write_text("{}")
             _, out = self.cli("doctor")
+            self.assertIn("Not checked for updates yet", out)
+            update._record(checked_at=time.time(), latest="99.0.0",
+                           outcome="failed: OSError: offline")
+            _, out = self.cli("doctor")
+        self.assertIn("latest 99.0.0", out)
         self.assertIn("failed: OSError: offline", out)
 
 
-class Setup(Home):
-    def test_setup_writes_it_and_reset_restores_it(self):
-        self.cli("setup", "--provider", "local", "--yes", "--no-test")
-        cfg = json.loads(self.cfg_file.read_text())
-        self.assertEqual(cfg["auto_update"], {"enabled": True, "interval_hours": 24})
-        cfg["auto_update"] = {"enabled": False, "interval_hours": 6}
-        self.cfg_file.write_text(json.dumps(cfg))
-        self.cli("setup", "--provider", "local", "--yes", "--no-test")
-        self.assertFalse(json.loads(self.cfg_file.read_text())["auto_update"]["enabled"])
-        self.cli("setup", "--provider", "local", "--yes", "--no-test", "--reset")
-        self.assertTrue(json.loads(self.cfg_file.read_text())["auto_update"]["enabled"])
-
+class Settings(Home):
     def test_install_twice_leaves_settings_alone(self):
         from baton.claude import settings
         self.cli("install")

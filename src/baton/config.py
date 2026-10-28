@@ -27,7 +27,6 @@ DEFAULTS = {
     "judge": {"enabled": "auto", "provider": "", "model": "", "timeout_seconds": 45},
     "run_actions": {"enabled": True, "timeout_seconds": 60, "max_commands": 20, "allow": "all"},
     "install": {"remove_old": True},
-    "auto_update": {"enabled": True, "interval_hours": 24},
     "never_handoff_patterns": [],
     "context": {"user_messages": 4, "tool_calls": 10},
 }
@@ -119,8 +118,6 @@ def load(path: Path | None = None) -> dict:
         c["judge"]["enabled"] = _bool(env("JUDGE"))
     if env("RUN_ACTIONS"):
         c["run_actions"]["enabled"] = _bool(env("RUN_ACTIONS"))
-    if env("AUTO_UPDATE"):
-        c["auto_update"]["enabled"] = _bool(env("AUTO_UPDATE"))
     p = provider_config(c)
     if env("MODEL") and p is not None:
         p["model"] = env("MODEL")

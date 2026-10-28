@@ -1,10 +1,10 @@
 """Keeping Baton current: compare this version with the one on main and, when main is
 newer, reinstall with the tool that installed Baton.
 
-Hooks call start_if_due() as they finish. At most once per auto_update.interval_hours it
-starts `baton update --auto` as a detached process, so a check never slows a hook and
-never prints to Claude Code. The check time is recorded before the process starts, so a
-failing update waits for the next interval instead of retrying on every hook. A lock
+Hooks call start_if_due() as they finish. At most once a day it starts
+`baton update --auto` as a detached process, so a check never slows a hook and never
+prints to Claude Code. The check time is recorded before the process starts, so a
+failing update waits a day instead of retrying on every hook. A lock
 file keeps two updates from running at once. Outcomes go to handoff.log and update.json
 in ~/.local/state/baton.
 """
@@ -23,11 +23,12 @@ from contextlib import contextmanager
 
 from . import __version__, package
 from .claude import settings
-from .config import load as load_config, state_dir
+from .config import state_dir
 from .state import log
 
 VERSION_URL = ("https://raw.githubusercontent.com/bradley-t-t/baton/%s/src/baton/__init__.py"
                % package.BRANCH)
+INTERVAL_HOURS = 24
 CHECK_TIMEOUT = 10       # seconds to read the version on main
 UPGRADE_TIMEOUT = 600    # seconds for pipx or uv to reinstall
 STATE_FILE = "update.json"
@@ -64,17 +65,6 @@ def latest_version(timeout: float = CHECK_TIMEOUT) -> str:
     return m.group(1)
 
 
-def options(cfg: dict) -> dict:
-    """auto_update with its defaults: {"enabled": bool, "interval_hours": float}."""
-    au = cfg.get("auto_update")
-    au = au if isinstance(au, dict) else {}
-    try:
-        hours = max(1.0, float(au.get("interval_hours", 24)))
-    except (TypeError, ValueError):
-        hours = 24.0
-    return {"enabled": au.get("enabled", True) is not False, "interval_hours": hours}
-
-
 def last() -> dict:
     """What the last check recorded: checked_at, latest, outcome."""
     try:
@@ -92,23 +82,22 @@ def _record(**fields) -> None:
     os.replace(tmp, d / STATE_FILE)
 
 
-def due(cfg: dict, now: float | None = None) -> bool:
-    """On, installed with pipx or uv, and the last check is an interval old."""
-    opts = options(cfg)
-    if not opts["enabled"] or not package.installer():
+def due(now: float | None = None) -> bool:
+    """Installed with pipx or uv, and the last check is a day old."""
+    if not package.installer():
         return False
     now = time.time() if now is None else now
     try:
         checked = float(last().get("checked_at") or 0)
     except (TypeError, ValueError):
         checked = 0.0
-    return now - checked >= opts["interval_hours"] * 3600
+    return now - checked >= INTERVAL_HOURS * 3600
 
 
-def start_if_due(cfg: dict | None = None) -> bool:
+def start_if_due() -> bool:
     """Start a background update when one is due. Never raises; True when started."""
     try:
-        if not due(load_config() if cfg is None else cfg):
+        if not due():
             return False
         _record(checked_at=time.time(), outcome="checking")
         subprocess.Popen([sys.executable, "-m", "baton", "update", "--auto"],
@@ -157,7 +146,14 @@ def _run(cmd: list, timeout: float) -> None:
 
 def update(check_only: bool = False) -> dict:
     """Check main and upgrade when it's newer. Returns {"current", "latest", "outcome",
-    "upgraded"}; raises on failure, after recording it."""
+    "upgraded"}; raises on failure, after recording it. A check_only run doesn't count
+    as the day's check, so it never holds back an update."""
+
+    def record(outcome: str) -> None:
+        stamp = {} if check_only else {"checked_at": time.time()}
+        _record(latest=result["latest"], outcome=outcome, **stamp)
+        log("update: " + outcome)
+
     with _lock():
         result = {"current": __version__, "latest": "", "upgraded": False}
         try:
@@ -178,10 +174,7 @@ def update(check_only: bool = False) -> dict:
                     _run([sys.executable, "-m", "baton", "install"], 60)
                 result.update(outcome="updated %s -> %s" % (__version__, latest), upgraded=True)
         except Exception as e:  # noqa: BLE001
-            outcome = "failed: %s: %s" % (type(e).__name__, e)
-            _record(checked_at=time.time(), latest=result["latest"], outcome=outcome)
-            log("update: " + outcome)
+            record("failed: %s: %s" % (type(e).__name__, e))
             raise
-        _record(checked_at=time.time(), latest=result["latest"], outcome=result["outcome"])
-        log("update: " + result["outcome"])
+        record(result["outcome"])
         return result
