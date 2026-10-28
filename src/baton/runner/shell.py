@@ -1,9 +1,8 @@
 """Reading shell scripts: fenced blocks, logical lines, simple commands and their
-executables. Used for the allow list, the command cap and the result summary."""
+executables. Used for the allow list and the command cap."""
 
 from __future__ import annotations
 
-import os
 import re
 import shlex
 from pathlib import Path
@@ -168,75 +167,4 @@ def script_commands(body: str) -> list:
     out = []
     for line in logical_lines(body):
         out.extend(c for c in simple_commands(line) if first_word(c))
-    return out
-
-
-OPERATORS = {"&&", "||", "|", ";", "&", ";;", "|&"}
-
-
-def segments(cmd: str) -> list:
-    """Split one command line into simple commands at && || | ; so a chain like
-    `rm f && ls dir | grep f || echo ok` never reads as paths of rm."""
-    try:
-        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        toks = list(lex)
-    except ValueError:
-        toks = cmd.split()
-    segs, cur = [], []
-    for tok in toks:
-        if tok in OPERATORS or set(tok) <= set("&|;"):
-            if cur:
-                segs.append(cur)
-            cur = []
-        else:
-            cur.append(tok)
-    if cur:
-        segs.append(cur)
-    return segs
-
-
-def verb_args(parts: list):
-    """(executable name, args) of a simple command, skipping sudo/env/VAR= prefixes."""
-    i = 0
-    while i < len(parts):
-        tok = parts[i]
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
-            i += 1
-            continue
-        name = Path(tok.lstrip("./")).name
-        if name in PREFIXES or name in KEYWORDS:
-            i += 1
-            continue
-        return name, parts[i + 1:]
-    return "", []
-
-
-def is_redirect(tok: str) -> bool:
-    return bool(tok) and set(tok) <= set("<>&|") and ("<" in tok or ">" in tok)
-
-
-def redirect_targets(args: list) -> list:
-    out = []
-    for i, a in enumerate(args):
-        if is_redirect(a) and ">" in a and "&" not in a and i + 1 < len(args):
-            if args[i + 1] != "/dev/null" and not (i > 0 and args[i - 1] == "2"):
-                out.append(args[i + 1])
-    return out
-
-
-def plain_args(args: list) -> list:
-    out, skip = [], False
-    for i, a in enumerate(args):
-        if skip:
-            skip = False
-            continue
-        if is_redirect(a):
-            skip = True
-            continue
-        if a.isdigit() and i + 1 < len(args) and is_redirect(args[i + 1]):
-            continue
-        if a.startswith("-"):
-            continue
-        out.append(os.path.expanduser(a))
     return out

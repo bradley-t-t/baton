@@ -13,13 +13,5 @@ class Secrets(Home):
         self.assertEqual(keys.read(), {"XAI_API_KEY": "new$key", "OTHER": "x"})
         self.assertEqual(keys.mode(), 0o600 if POSIX else None)
 
-    def test_the_old_file_is_read_until_there_is_a_new_one(self):
-        old = keys.old_secrets_path()
-        old.parent.mkdir(parents=True)
-        old.write_text("XAI_API_KEY=old\n")
-        self.assertEqual(keys.read(), {"XAI_API_KEY": "old"})
-        keys.write("XAI_API_KEY", "new")
-        self.assertEqual(keys.read(), {"XAI_API_KEY": "new"})
-
 if __name__ == "__main__":
     unittest.main()

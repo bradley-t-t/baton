@@ -5,8 +5,6 @@
            answer in its place; hide later text in the same turn.
   stop     Stop: hand off here only when display didn't. Never blocks.
 
-Each run also starts a background update when one is due (see baton.update).
-
 The hook commands in ~/.claude/settings.json name this module and these three names,
 so neither may change.
 """
@@ -15,7 +13,7 @@ from __future__ import annotations
 
 import sys
 
-from .. import keys, update
+from .. import keys
 from .display import on_display
 from .prompt import on_prompt
 from .stop import on_stop
@@ -38,7 +36,4 @@ def main(argv: list | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
     # The POSIX hook command sources secrets.env first; the Windows one has no shell.
     keys.load_into_env()
-    try:
-        return hook()
-    finally:
-        update.start_if_due()
+    return hook()

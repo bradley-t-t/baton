@@ -38,9 +38,9 @@ class Install(unittest.TestCase):
         st = settings.status(self.settings)
         self.assertFalse(any(st[event] for event in settings.EVENTS))
 
-    def test_old_claude_handoff_hooks_are_replaced(self):
-        old_cmd = ('if [ -f ~/.config/claude-handoff/secrets.env ]; then set -a; . f; set +a; '
-                   'fi; PYTHONPATH="/x/claude-handoff" "python3" -m claude_handoff.hooks %s')
+    def test_earlier_baton_hooks_are_replaced(self):
+        old_cmd = ('if [ -f ~/.config/baton/secrets.env ]; then set -a; . f; set +a; '
+                   'fi; PYTHONPATH="/x/baton" "python3" -m baton.hooks %s')
         tether = {"hooks": [{"type": "command", "command": "~/.tether/hook.sh stop"}]}
         self.settings.write_text(json.dumps({"hooks": {
             "Stop": [tether, {"hooks": [{"type": "command", "command": old_cmd % "stop"}]}],
@@ -79,16 +79,14 @@ class InstalledCommands(unittest.TestCase):
                               text=True, cwd=tempfile.mkdtemp(),
                               env={**os.environ, "PYTHONPATH": str(settings.package_root())})
 
-    def test_package_root_holds_the_packages(self):
+    def test_package_root_holds_the_package(self):
         root = settings.package_root()
         self.assertTrue((root / "baton" / "hooks" / "__main__.py").is_file())
-        self.assertTrue((root / "claude_handoff" / "hooks.py").is_file())
 
-    def test_both_module_paths_run(self):
-        for module in ("baton.hooks", "claude_handoff.hooks"):
-            p = self.run_module(module)
-            self.assertEqual(p.returncode, 2, p.stderr)
-            self.assertIn("baton.hooks", p.stderr)
+    def test_the_module_runs(self):
+        p = self.run_module("baton.hooks")
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertIn("baton.hooks", p.stderr)
 
 if __name__ == "__main__":
     unittest.main()

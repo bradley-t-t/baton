@@ -2,10 +2,9 @@
 # Install Baton: curl -fsSL https://taylorurl.com/baton | sh
 #
 # Installs the baton command with pipx or uv (installing uv into your home folder if
-# neither is there), removes an old pip install of claude-handoff, adds the bin folder
+# neither is there), removes an older pip install of Baton, adds the bin folder
 # to PATH in your login shell's startup file, then runs `baton setup` and
 # `baton doctor`. Nothing is installed system-wide and sudo is never used. Set
-# "install": {"remove_old": false} in ~/.config/baton/config.json to keep an old install.
 #
 # Arguments after `sh -s --` go to `baton setup`, for example:
 #   curl -fsSL .../install.sh | sh -s -- --provider local --yes
@@ -60,7 +59,7 @@ usable() {
     return 0
 }
 
-# Pythons that might hold an old pip install of claude-handoff or baton.
+# Pythons that might hold an old pip install of baton.
 pythons() {
     seen=""
     for p in python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
@@ -80,41 +79,22 @@ pythons() {
 
 # Names of this project's packages installed with pip in that Python. PyPI has an
 # unrelated package called baton, so a name only counts when it was installed from a
-# folder or git (direct_url.json) and its command runs baton.cli or claude_handoff.
+# folder or git (direct_url.json) and its command runs baton.cli.
 OLD_FINDER='
 import sys
 try:
     from importlib import metadata
 except ImportError:
     sys.exit(0)
-for name in ("claude-handoff", "baton", "claude-baton"):
+for name in ("baton", "claude-baton"):
     try:
         d = metadata.distribution(name)
     except Exception:
         continue
     eps = [e.value for e in d.entry_points]
-    ours = any(v.startswith(("baton.cli", "claude_handoff.")) for v in eps)
-    if name == "claude-handoff" or (ours and d.read_text("direct_url.json")):
+    if any(v.startswith("baton.cli") for v in eps) and d.read_text("direct_url.json"):
         print(name)
 '
-
-# "install": {"remove_old": false} in the config keeps an old install. Default: remove.
-remove_old_wanted() {
-    cfg="${BATON_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/baton/config.json}"
-    [ -f "$cfg" ] || return 0
-    for py in $(pythons); do
-        "$py" - "$cfg" <<'PY' 2>/dev/null && return 0
-import json, sys
-try:
-    c = json.load(open(sys.argv[1]))
-except Exception:
-    sys.exit(0)
-sys.exit(1 if ((c.get("install") or {}).get("remove_old", True) is False) else 0)
-PY
-        return 1
-    done
-    return 0
-}
 
 cleanup_old() {
     step "Checking for an older install"
@@ -125,10 +105,6 @@ cleanup_old() {
         found=1
         names=$(printf '%s' "$names" | tr '\n' ' ')
         say "Found ${B}${names% }${N} installed with pip in $py"
-        if [ -z "$REMOVE_OLD" ]; then
-            note "Kept it (install.remove_old is false). Its baton command may hide the new one."
-            continue
-        fi
         # shellcheck disable=SC2086
         if out=$("$py" -m pip uninstall -y $names 2>&1); then
             ok "Uninstalled $names"
@@ -316,9 +292,6 @@ main() {
     LOG=$(mktemp "${TMPDIR:-/tmp}/baton-install.XXXXXX")
     trap 'rm -f "$LOG"' EXIT INT TERM
     [ -n "$TTY" ] || note "No terminal found, so nothing will be asked."
-    REMOVE_OLD=1
-    remove_old_wanted || REMOVE_OLD=""
-
     cleanup_old
     choose_installer
     install_baton

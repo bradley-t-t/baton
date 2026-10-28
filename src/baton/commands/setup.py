@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .. import keys, models, system, ui
 from ..claude import settings
-from ..config import config_dir, config_path, env, example_config_path, migrate_old_files
+from ..config import DEFAULTS, config_dir, config_path, env
 from ..providers import ping
 from ..runner import allows_all
 
@@ -78,7 +78,7 @@ def _norm_provider(name: str) -> str:
 
 
 def _load_raw() -> dict:
-    """The config file as written (no defaults merged), or the example."""
+    """The config file as written (no defaults merged), or the defaults."""
     path = config_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -86,7 +86,7 @@ def _load_raw() -> dict:
             return data
     except (OSError, ValueError):
         pass
-    return json.loads(example_config_path().read_text(encoding="utf-8"))
+    return copy.deepcopy(DEFAULTS)
 
 
 def _target_config() -> Path:
@@ -160,8 +160,6 @@ def _run(args) -> int:
         ui.say("When Claude Code turns down a request, ask another AI and bring its answer back.")
         ui.say(ui.dim("Press Enter to take the default in brackets. Ctrl-C quits."))
 
-    for m in ([] if args.dry_run else migrate_old_files()):
-        ui.say("Copied %s from ~/.config/claude-handoff/" % m)
     raw = _load_raw()
 
     name = _choose_provider(args, raw, asking)
@@ -318,4 +316,4 @@ def _review(spec: dict, name: str, pcfg: dict, resolved: str, ra: dict, mode: st
         mode = "" if system.windows() else " (mode 600)"
         ui.say("API key:   %s in %s%s" % (key_env, keys.secrets_path(), mode))
     ui.say("Hooks:     %s" % settings_file)
-    ui.say(ui.dim("Any older Baton or claude-handoff entries are replaced. Other hooks are kept."))
+    ui.say(ui.dim("Any older Baton entries are replaced. Other hooks are kept."))
