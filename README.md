@@ -89,4 +89,6 @@ This removes Baton's hooks, deletes `~/.config/baton` (config and keys), `~/.loc
 
 Baton used to be called claude-handoff. `baton setup` or `baton install` replaces the old hooks and copies the old config.
 
+To run the tests from a checkout: `python3 -m unittest`.
+
 MIT licensed, see [LICENSE](LICENSE).

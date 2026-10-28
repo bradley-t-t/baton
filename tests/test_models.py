@@ -68,7 +68,7 @@ class Resolve(unittest.TestCase):
             sent.update(body)
             return {"choices": [{"message": {"content": "pong"}}]}
         with mock.patch("baton.providers.base.http_json", side_effect=fake_http), \
-                mock.patch("baton.providers.openai_compat.http_json", side_effect=fake_http), \
+                mock.patch("baton.providers.openai_compatible.http_json", side_effect=fake_http), \
                 mock.patch.dict(os.environ, {"XAI_API_KEY": "k"}):
             out = get({"type": "xai", "model": "auto", "api_key_env": "XAI_API_KEY"}).complete("hi")
         self.assertEqual(out, "pong")
@@ -79,7 +79,6 @@ class Resolve(unittest.TestCase):
         with mock.patch("baton.models.resolve") as r:
             self.assertEqual(p.model(), "gpt-6.1-sol")
             r.assert_not_called()
-
 
 if __name__ == "__main__":
     unittest.main()

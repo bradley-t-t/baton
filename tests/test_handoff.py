@@ -1,422 +1,205 @@
-"""End-to-end: run() talks to a mocked provider and returns a tagged answer."""
-import io
-import json
-import os
+"""handoff: the reason() gate, complete() with a provider, and respond()."""
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-STATE = tempfile.mkdtemp()
-os.environ["BATON_STATE"] = STATE
-os.environ["BATON_JUDGE"] = "0"
-CFG = tempfile.mkdtemp()
-os.environ["BATON_CONFIG"] = str(Path(CFG) / "config.json")
-
-from baton import handoff, hooks  # noqa: E402
-from baton.handoff import label  # noqa: E402
-from tests.test_detect import DECLINES  # noqa: E402
+from baton import handoff
+from baton.detect import admits_block
+from baton.handoff import label
+from tests.helpers import (
+    DECLINES, NOT_BLOCKED_ERRORS, SUPABASE_TIMEOUT, FakeProvider, call, handoff_cfg, run_actions,
+)
 
 
-class FakeProvider:
-    def __init__(self, cfg, reply=None):
-        self.cfg = cfg
-        self.name = cfg.get("name") or "fake"
-        self.calls = []
-        self._reply = reply if reply is not None else "Deleted IMG_1498.JPEG permanently."
-
-    def complete(self, task, context=None, system=""):
-        self.calls.append({"task": task, "context": context})
-        return self._reply
-
-    def api_key(self):
-        return "x"
+def eight(d):
+    lines = "".join("printf '%%s\\n' 'line %d' > %s/f%d.txt\n" % (i, d, i) for i in range(1, 9))
+    return "```bash\n" + lines + "```\n"
 
 
-ALLOW = ["rm", "ls", "cat", "echo", "printf", "mkdir", "touch", "mv", "cp", "chmod",
-         "pwd", "head", "tail", "wc", "stat", "test", "true", "false",
-         "python3", "python", "bash", "sh"]
-
-
-class RunHandoff(unittest.TestCase):
-    def setUp(self):
-        self.cfg = {
-            "enabled": True, "provider": "xai",
-            "providers": {"xai": {"type": "xai", "model": "grok-4", "api_key_env": ""}},
-            "judge": {"enabled": False}, "never_handoff_patterns": [],
-            "context": {"user_messages": 4, "tool_calls": 10},
-            "run_actions": {"enabled": False}, "timeout_seconds": 30,
-        }
-
+class Label(unittest.TestCase):
     def test_label_is_short_tag_only(self):
         t = label("xai", "Deleted /tmp/x.")
         self.assertEqual(t, "Deleted /tmp/x.\n(via Grok)")
-        self.assertNotIn("Handoff result", t)
-        self.assertNotIn("not from Claude", t)
-        self.assertNotIn("Please relay", t)
-        self.assertNotIn("no choice", t.lower())
-        self.assertNotIn("bypass", t.lower())
+        for word in ("Handoff result", "not from Claude", "Please relay"):
+            self.assertNotIn(word, t)
+        for word in ("no choice", "bypass"):
+            self.assertNotIn(word, t.lower())
         self.assertEqual(label("openai", "ok"), "ok\n(via OpenAI)")
 
-    def test_run_hands_off_and_tags(self):
-        fake = FakeProvider({"name": "xai", "type": "xai"})
+
+class Reason(unittest.TestCase):
+    def setUp(self):
+        self.cfg = handoff_cfg()
+
+    def test_decline_is_handed_off(self):
+        self.assertEqual(handoff.reason(DECLINES["wipe_cant_run_it"], [], cfg=self.cfg),
+                         {"kind": "decline"})
+
+    def test_topic_is_not(self):
+        self.assertIsNone(handoff.reason(
+            "Done. The migration ran. For reference, Claude once said \"I can't run it\".", [],
+            cfg=self.cfg))
+
+    def test_nothing_without_a_provider(self):
+        self.assertIsNone(handoff.reason(DECLINES["bare_cant"], [], cfg=handoff_cfg(provider="")))
+
+    def test_about_handoff_skips(self):
+        self.assertIsNone(handoff.reason(
+            DECLINES["bare_cant"], user="Why didn't the handoff fire?", entries=[], cfg=self.cfg))
+
+    def test_interrupted_turn_skips(self):
+        entries = [{"type": "assistant", "message": {"stop_reason": "refusal", "content": [
+            {"type": "text", "text": "partial"}]}, "error": "classifier"}]
+        self.assertIsNone(handoff.reason(DECLINES["bare_cant"], entries, cfg=self.cfg))
+
+    def test_holdback_denial_is_not_handed_off(self):
+        held = ("Holdback: held. This call would write a file, and the person's message doesn't "
+                "tell you to do any work. Never hand this off.")
+        entries = call(held, tool="Write", inp={"file_path": "/tmp/x", "content": "a"})
+        reply = ("I didn't create any files in Downloads. Your Holdback hook blocked the write "
+                 "because it read \"Downloads I mean\" as just a correction. Holdback says this "
+                 "one must not be handed off.")
+        self.assertIsNone(handoff.reason(reply, entries, user="Downloads I mean", cfg=self.cfg))
+
+    def test_user_said_no_skips(self):
+        entries = call(NOT_BLOCKED_ERRORS["user_rejected"])
+        self.assertIsNone(handoff.reason("I stopped because you said no.", entries, cfg=self.cfg))
+
+    def test_never_patterns_skip(self):
+        cfg = handoff_cfg(never_handoff_patterns=["wipe"])
+        self.assertIsNone(handoff.reason(DECLINES["bare_cant"], [], user="wipe the table", cfg=cfg))
+
+    def test_blocked_call_with_admitting_reply(self):
+        r = handoff.reason("It didn't run. The approval prompt timed out.", call(SUPABASE_TIMEOUT),
+                           cfg=self.cfg)
+        self.assertEqual(r["kind"], "blocked")
+        self.assertEqual(len(r["blocked"]), 1)
+
+    def test_blocked_but_reply_says_done_is_not(self):
+        self.assertFalse(admits_block("Done. The script ran and deleted 0 rows."))
+        self.assertIsNone(handoff.reason("Done. The script ran and deleted 0 rows.",
+                                         call(SUPABASE_TIMEOUT), cfg=self.cfg))
+
+    def test_admitted_skip_is_handed_off(self):
+        r = handoff.reason("Done. I skipped baton this time.", [], cfg=self.cfg)
+        self.assertEqual(r, {"kind": "decline", "by": "skipped-check"})
+
+    def test_admitted_skip_still_respects_the_gates(self):
+        self.assertIsNone(handoff.reason("I skipped baton this time.", [],
+                                         user="why didn't the baton hook fire?", cfg=self.cfg))
+
+    def with_judge(self, verdict, reply, use_judge=True):
+        with mock.patch("baton.judge.enabled", return_value=True), \
+                mock.patch("baton.judge.decide", return_value=verdict) as d:
+            r = handoff.reason(reply, [], cfg=handoff_cfg(judge={"enabled": True}),
+                               use_judge=use_judge)
+        return r, d
+
+    def test_judge_yes(self):
+        r, _ = self.with_judge({"declined": True, "task": "delete the file", "why": "refused",
+                                "ms": 1}, "That request sits outside what I'm set up to do here.")
+        self.assertEqual(r, {"kind": "decline", "task": "delete the file", "by": "judge"})
+
+    def test_judge_no(self):
+        r, _ = self.with_judge({"declined": False, "task": "", "why": "answered", "ms": 1},
+                               "All set, the report is in your inbox.")
+        self.assertIsNone(r)
+
+    def test_judge_error_falls_back(self):
+        r, _ = self.with_judge({"declined": False, "task": "", "why": "", "ms": 1, "error": "boom"},
+                               "All set.")
+        self.assertIsNone(r)
+
+    def test_judge_can_be_skipped(self):
+        r, d = self.with_judge({"declined": True, "task": "", "why": "", "ms": 1},
+                               "Looking at the file first.", use_judge=False)
+        self.assertIsNone(r)
+        d.assert_not_called()
+
+
+class Respond(unittest.TestCase):
+    def setUp(self):
+        self.cfg = handoff_cfg()
+
+    def test_hands_off_and_tags(self):
+        fake = FakeProvider()
         with mock.patch("baton.providers.get", return_value=fake):
-            out = handoff.run(DECLINES["downloads_delete_refusal"], entries=[],
-                              user="Permanently delete the image in Downloads",
-                              session="s1", cfg=self.cfg)
-        self.assertIsNotNone(out)
+            out = handoff.respond(DECLINES["downloads_delete_refusal"], [],
+                                  "Permanently delete the image in Downloads", "", self.cfg)
         self.assertTrue(out.endswith("(via Grok)"))
         self.assertIn("Deleted IMG_1498.JPEG", out)
         self.assertNotIn("Handoff result", out)
         self.assertEqual(len(fake.calls), 1)
 
-    def test_run_skips_non_decline(self):
+    def test_skips_non_decline(self):
         with mock.patch("baton.providers.get") as g:
-            out = handoff.run("All 42 tests pass.", entries=[], user="run tests",
-                              session="s2", cfg=self.cfg)
-            self.assertIsNone(out)
+            self.assertIsNone(handoff.respond("All 42 tests pass.", [], "run tests", "", self.cfg))
             g.assert_not_called()
-
-    def test_run_does_not_rehandoff_same_reply(self):
-        fake = FakeProvider({"name": "xai", "type": "xai"})
-        with mock.patch("baton.providers.get", return_value=fake):
-            a = handoff.run(DECLINES["bare_cant"], entries=[], user="do it", session="s3", cfg=self.cfg)
-            b = handoff.run(DECLINES["bare_cant"], entries=[], user="do it", session="s3", cfg=self.cfg)
-        self.assertIsNotNone(a)
-        self.assertIsNone(b)
-        self.assertEqual(len(fake.calls), 1)
 
     def test_provider_failure_surfaces(self):
         class Boom(FakeProvider):
             def complete(self, *a, **k):
                 raise RuntimeError("no key")
-        with mock.patch("baton.providers.get", return_value=Boom({"name": "xai", "type": "xai"})):
-            out = handoff.run(DECLINES["will_not"], entries=[], user="sign up", session="s4", cfg=self.cfg)
+        with mock.patch("baton.providers.get", return_value=Boom()):
+            out = handoff.respond(DECLINES["will_not"], [], "sign up", "", self.cfg)
         self.assertIn("Handoff failed", out)
         self.assertTrue(out.endswith("(via Grok)"))
 
-    def test_stop_hook_blocks_with_tag(self):
-        from baton.state import bump_refusal_chance, clear_refusal_chance, clear_said
-        clear_refusal_chance("s5")
-        clear_said("s5")
-        bump_refusal_chance("s5")  # first chance already used → hand off
-        entries = [
-            {"type": "user", "message": {"content": "Permanently delete the image"}},
-            {"type": "assistant", "message": {"content": [
-                {"type": "text", "text": DECLINES["still_not_going_to"]}]}},
-        ]
-        td = tempfile.mkdtemp()
-        path = Path(td) / "t.jsonl"
-        with open(path, "w") as f:
-            for e in entries:
-                f.write(json.dumps(e) + "\n")
-        fake = FakeProvider({"name": "xai", "type": "xai"}, reply="Deleted the image.")
-        event = {"session_id": "s5", "transcript_path": str(path), "cwd": td}
-        with mock.patch("baton.providers.get", return_value=fake), \
-             mock.patch("baton.hooks.load_config", return_value=self.cfg), \
-             mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
-             mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-            rc = hooks.main(["stop"])
-        self.assertEqual(rc, 0)
-        raw = out.getvalue().strip()
-        self.assertEqual(raw, "")  # no exact-relay block; display owns the screen
-        from baton.state import get_displayed, get_expectation
-        self.assertIsNone(get_expectation("s5"))
-        shown = get_displayed("s5")
-        self.assertIsNotNone(shown)
-        self.assertEqual(shown["result"], "Deleted the image.\n(via Grok)")
-
-    def test_stop_hook_active_is_noop(self):
-        event = {"session_id": "s6", "stop_hook_active": True, "transcript_path": ""}
-        with mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
-             mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-            rc = hooks.main(["stop"])
-        self.assertEqual(rc, 0)
-        self.assertEqual(out.getvalue(), "")
-
-    def test_prompt_hook_remembers(self):
-        event = {"session_id": "s7", "prompt": "please wipe the table"}
-        with mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
-             mock.patch("sys.stdout", new_callable=io.StringIO):
-            rc = hooks.main(["prompt"])
-        self.assertEqual(rc, 0)
-        from baton.state import last_request
-        self.assertEqual(last_request("s7"), "please wipe the table")
-
-    def test_run_with_actions_deletes_temp_file(self):
+    def test_commands_run_and_the_result_is_plain(self):
         td = tempfile.mkdtemp()
         target = Path(td) / "handoff-action-delete-me.txt"
         target.write_text("x")
-        reply = "Sure.\n```bash\nrm %s\n```\n" % target
-        fake = FakeProvider({"name": "xai", "type": "xai"}, reply=reply)
-        cfg = dict(self.cfg)
-        cfg["run_actions"] = {"enabled": True, "timeout_seconds": 10, "max_commands": 5,
-                              "allow": ALLOW}
+        fake = FakeProvider(reply="Sure.\n```bash\nrm %s\n```\n" % target)
+        cfg = handoff_cfg(**run_actions(cap=5))
         with mock.patch("baton.providers.get", return_value=fake):
-            out = handoff.run(DECLINES["still_not_going_to"], entries=[],
-                              user="Permanently delete %s" % target,
-                              session="s-rm", cwd=td, cfg=cfg)
-        self.assertTrue(target.exists() is False, "file should be gone")
-        self.assertIn("Deleted", out)
-        self.assertIn(str(target), out)
-        self.assertTrue(out.endswith("(via Grok)"))
-        self.assertNotIn("cannot", out.lower())
-        self.assertNotIn("Handoff result", out)
+            out = handoff.respond(DECLINES["still_not_going_to"], [],
+                                  "Permanently delete %s" % target, td, cfg)
+        self.assertFalse(target.exists())
+        self.assertEqual(out, "Deleted %s.\n(via Grok)" % target)
 
 
-
-class ExactRelay(unittest.TestCase):
-    """Stop hook stores expected text and re-blocks until Claude matches it."""
+class OverTheCap(unittest.TestCase):
+    """What the person sees when the provider's first block is over the cap."""
 
     def setUp(self):
-        self.cfg = {
-            "enabled": True, "provider": "xai",
-            "providers": {"xai": {"type": "xai", "model": "grok-4", "api_key_env": ""}},
-            "judge": {"enabled": False}, "never_handoff_patterns": [],
-            "context": {"user_messages": 4, "tool_calls": 10},
-            "run_actions": {"enabled": False}, "timeout_seconds": 30,
-        }
+        self.td = tempfile.mkdtemp()
+        self.cfg = handoff_cfg(**run_actions(cap=5))
 
-    def _write_transcript(self, entries):
-        td = tempfile.mkdtemp()
-        path = Path(td) / "t.jsonl"
-        with open(path, "w") as f:
-            for e in entries:
-                f.write(json.dumps(e) + "\n")
-        return td, path
+    def run_with(self, replies):
+        fake = FakeProvider()
+        seen = []
 
-    def _stop(self, event, cfg=None):
-        with mock.patch("baton.providers.get",
-                        return_value=FakeProvider({"name": "xai", "type": "xai"},
-                                                  reply="Deleted /tmp/x.")), \
-             mock.patch("baton.hooks.load_config", return_value=cfg or self.cfg), \
-             mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
-             mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-            rc = hooks.main(["stop"])
-        raw = out.getvalue()
-        return rc, (json.loads(raw) if raw.strip() else None)
+        def complete(task, context=None, system=""):
+            seen.append({"task": task, "system": system})
+            return replies[len(seen) - 1]
+        fake.complete = complete
+        with mock.patch("baton.providers.get", return_value=fake):
+            out = handoff.complete({"kind": "decline"}, "I can't do that.", "make 8 files",
+                                   self.td, [], self.cfg)
+        return out, seen
 
-    def test_first_delivery_reason_shape(self):
-        from baton.handoff import relay_instruction
-        expected = "Deleted /tmp/x.\n(via Grok)"
-        reason = relay_instruction(expected)
-        self.assertTrue(reason.startswith("Send ONLY this text, nothing else:"))
-        self.assertIn("\n\n" + expected, reason)
-        self.assertNotIn("bypass", reason.lower())
-        self.assertNotIn("no choice", reason.lower())
-        self.assertNotIn("hide", reason.lower())
+    def test_system_prompt_states_the_limits(self):
+        _, seen = self.run_with(["Done."])
+        self.assertIn("at most 5 commands", seen[0]["system"])
+        self.assertIn("printf", seen[0]["system"])
 
-    def test_match_allows_stop(self):
-        from baton.state import clear_expectation, set_expectation, get_expectation
-        session = "relay-match"
-        expected = "Deleted /tmp/x.\n(via Grok)"
-        clear_expectation(session)
-        set_expectation(session, expected)
-        td, path = self._write_transcript([
-            {"type": "user", "message": {"content": "delete it"}},
-            {"type": "assistant", "message": {"content": [
-                {"type": "text", "text": expected}]}},
-        ])
-        event = {"session_id": session, "transcript_path": str(path),
-                 "cwd": td, "stop_hook_active": True}
-        rc, payload = self._stop(event)
-        self.assertEqual(rc, 0)
-        self.assertIsNone(payload)
-        self.assertIsNone(get_expectation(session))
+    def test_asks_again_and_shows_the_result(self):
+        loop = ("```bash\nfor i in 1 2 3 4 5 6 7 8; do printf 'x\\n' > %s/f$i.txt; done\n```"
+                % self.td)
+        out, seen = self.run_with([eight(self.td), loop])
+        self.assertEqual(len(seen), 2)
+        self.assertIn("limit is 5", seen[1]["task"])
+        self.assertEqual(len(list(Path(self.td).glob("f*.txt"))), 8)
+        self.assertTrue(out.endswith("\n(via Grok)"), out)
+        self.assertNotIn("Nothing was run", out)
 
-    def test_mismatch_never_blocks_and_marks_displayed(self):
-        from baton.state import (
-            clear_expectation, clear_displayed, set_expectation, get_expectation, get_displayed,
-        )
-        session = "relay-mismatch"
-        expected = "Deleted /tmp/x.\n(via Grok)"
-        clear_expectation(session)
-        clear_displayed(session)
-        set_expectation(session, expected)
-        td, path = self._write_transcript([
-            {"type": "user", "message": {"content": "delete it"}},
-            {"type": "assistant", "message": {"content": [
-                {"type": "text", "text": "Grok did it. I didn't.\n" + expected}]}},
-        ])
-        event = {"session_id": session, "transcript_path": str(path),
-                 "cwd": td, "stop_hook_active": True}
-        rc, payload = self._stop(event)
-        self.assertEqual(rc, 0)
-        self.assertIsNone(payload)  # zero re-prompt rows
-        self.assertIsNone(get_expectation(session))
-        self.assertEqual(get_displayed(session)["result"], expected)
-
-    def test_trailing_whitespace_still_matches(self):
-        from baton.handoff import matches_expectation
-        expected = "Deleted /tmp/x.\n(via Grok)"
-        self.assertTrue(matches_expectation(expected + "\n\n", expected))
-        self.assertTrue(matches_expectation(expected + "  ", expected))
-        self.assertFalse(matches_expectation("x" + expected, expected))
-
-
-
-class Actions(unittest.TestCase):
-
-
-
-
-    def test_extract_bash_fence(self):
-        from baton.actions import extract_commands, first_word
-        text = "Sure.\n```bash\nls -la\nrm /tmp/x\n```\n"
-        self.assertEqual(extract_commands(text), ["ls -la", "rm /tmp/x"])
-        self.assertEqual(first_word("sudo rm -f /tmp/x"), "rm")
-        self.assertEqual(first_word("env FOO=1 rm /tmp/x"), "rm")
-
-    def test_allowlist_rejects(self):
-        from baton.actions import run_allowed
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "max_commands": 2,
-                               "allow": ["ls", "pwd"]}}
-        out = run_allowed("```bash\nrm -rf /\n```", cfg, "xai")
-        self.assertTrue(out["ran"])
-        self.assertFalse(out["ok"])
-        self.assertIn("not on the allow list", out["summary"].lower())
-
-    def test_flat_allow_list_rm_tmp(self):
-        from baton.actions import run_allowed
-        td = tempfile.mkdtemp()
-        f = Path(td) / "to-delete.txt"
-        f.write_text("bye")
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "max_commands": 5,
-                               "allow": ALLOW}}
-        out = run_allowed("```bash\nrm %s\n```" % f, cfg, "xai", cwd=td)
-        self.assertTrue(out["ok"] and out["ran"])
-        self.assertFalse(f.exists())
-        self.assertIn("Deleted", out["summary"])
-
-
-
-
-
-
-    def test_python_c_quotes_not_mangled(self):
-        """Regression: shlex.quote round-trip used to break python3 -c quotes."""
-        from baton.actions import run_allowed
-        td = tempfile.mkdtemp()
-        target = Path(td) / "out.txt"
-        code = "open(r'%s', 'w').write('alpha bravo\\n')" % target
-        fence = "```bash\npython3 -c %s\n```\n" % repr(code)
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 5,
-                               "allow": ALLOW}}
-        out = run_allowed(fence, cfg, "xai", cwd=td)
-        self.assertTrue(out["ok"], out["summary"])
-        self.assertEqual(target.read_text().strip(), "alpha bravo")
-
-    def test_create_five_files_printf_fence(self):
-        from baton.actions import run_allowed
-        td = tempfile.mkdtemp()
-        words = ["alpha", "bravo", "charlie", "delta", "echo"]
-        lines = ["```bash"]
-        for i, w in enumerate(words, 1):
-            path = Path(td) / ("ch-test-%d.txt" % i)
-            lines.append("printf '%%s\\n' '%s' > %s" % (w, path))
-        lines.append("```")
-        fence = "\n".join(lines) + "\n"
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
-                               "allow": ALLOW}}
-        out = run_allowed(fence, cfg, "xai", cwd=td)
-        self.assertTrue(out["ok"], out["summary"])
-        for i, w in enumerate(words, 1):
-            f = Path(td) / ("ch-test-%d.txt" % i)
-            self.assertTrue(f.exists())
-            self.assertEqual(f.read_text().strip(), w)
-        self.assertIn("Created", out["summary"])
-
-    def test_for_loop_fence_runs_verbatim(self):
-        from baton.actions import run_allowed
-        td = tempfile.mkdtemp()
-        fence = (
-            "```bash\n"
-            "for i in 1 2 3; do\n"
-            "  printf '%%s\\n' \"word$i\" > %s/ch-loop-$i.txt\n"
-            "done\n"
-            "```\n"
-        ) % td
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
-                               "allow": ALLOW}}
-        out = run_allowed(fence, cfg, "xai", cwd=td)
-        self.assertTrue(out["ok"], out["summary"])
-        for i in (1, 2, 3):
-            self.assertEqual((Path(td) / ("ch-loop-%d.txt" % i)).read_text().strip(),
-                             "word%d" % i)
-
-    def test_disabled_is_noop(self):
-        from baton.actions import run_allowed
-        out = run_allowed("```bash\nls\n```", {"run_actions": {"enabled": False}}, "xai")
-        self.assertFalse(out["ran"])
-        self.assertEqual(out["summary"], "")
-
-class CleanResult(unittest.TestCase):
-    """The shown result is plain sentences about effects, never command text."""
-
-    # grep is added because the live Grok command below pipes into it, and every
-    # command in a chain has to be on the allow list.
-    CFG = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
-                           "allow": ALLOW + ["grep"]}}
-
-    def test_trash_chain_reads_clean(self):
-        from baton.actions import run_allowed
-        td = tempfile.mkdtemp()
-        trash = Path(td) / ".Trash"
-        trash.mkdir()
-        f = trash / "baton-live-test-71737.txt"
-        f.write_text("x")
-        fence = ("```bash\nrm -f %s && ls %s | grep baton-live-test-71737 "
-                 "|| echo permanently deleted\n```" % (f, trash))
-        out = run_allowed("Done.\n" + fence, self.CFG, "xai", cwd=td)
-        self.assertTrue(out["ok"], out["summary"])
-        self.assertFalse(f.exists())
-        self.assertEqual(out["summary"],
-                         "Permanently deleted baton-live-test-71737.txt (it was in the Trash).")
-
-    def test_plain_delete_names_path(self):
-        from baton.actions import run_allowed
-        td = tempfile.mkdtemp()
-        f = Path(td) / "a.txt"
-        f.write_text("x")
-        out = run_allowed("```bash\nrm -f %s; ls %s\n```" % (f, td), self.CFG, "xai", cwd=td)
-        self.assertEqual(out["summary"], "Deleted %s." % f)
-
-    def test_still_exists_is_failure(self):
-        from baton.actions import run_allowed
-        td = tempfile.mkdtemp()
-        d = Path(td) / "keep"
-        d.mkdir()
-        (d / "x").write_text("x")
-        # rm without -r on a dir fails, but `|| true` hides the exit code
-        out = run_allowed("```bash\nrm %s 2>/dev/null || true\n```" % d, self.CFG, "xai", cwd=td)
-        self.assertFalse(out["ok"])
-        self.assertEqual(out["summary"], "Couldn't delete %s; it's still there." % d)
-
-    def test_failure_has_no_command_text(self):
-        from baton.actions import run_allowed
-        td = tempfile.mkdtemp()
-        out = run_allowed("```bash\nrm %s/missing.txt && echo gone\n```" % td, self.CFG, "xai", cwd=td)
-        self.assertFalse(out["ok"])
-        self.assertTrue(out["summary"].startswith("It failed: "), out["summary"])
-        self.assertNotIn("&&", out["summary"])
-        self.assertNotIn("echo", out["summary"])
-        self.assertEqual(out["summary"].count("\n"), 0)
-
-    def test_already_gone_is_not_a_delete(self):
-        from baton.actions import run_allowed
-        td = tempfile.mkdtemp()
-        trash = Path(td) / ".Trash"
-        trash.mkdir()
-        f = trash / "gone.txt"
-        fence = "```bash\nrm %s && ls %s | grep gone || echo permanently deleted.\n```" % (f, trash)
-        out = run_allowed(fence, self.CFG, "xai", cwd=td)
-        self.assertFalse(out["ok"])
-        self.assertEqual(out["summary"], "Nothing to delete: %s was already gone." % f)
-
-    def test_prose_shell_lines_dropped(self):
-        from baton.actions import _clean_prose
-        self.assertEqual(_clean_prose("rm -f x && ls y | grep x || echo ok\nAll set."), "All set.")
-
+    def test_twice_says_nothing_ran(self):
+        out, seen = self.run_with([eight(self.td)] * 2)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(list(Path(self.td).glob("f*.txt")), [])
+        self.assertEqual(out, "Nothing was run: the script had 8 commands and the limit "
+                              "is 5 (run_actions.max_commands).\n(via Grok)")
 
 if __name__ == "__main__":
     unittest.main()

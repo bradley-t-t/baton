@@ -41,7 +41,8 @@ baton = "baton.cli:main"
 version = { attr = "baton.__version__" }
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["baton*", "claude_handoff*"]
 
 [tool.setuptools.package-data]
-baton = ["check-step.md", "config.example.json"]
+baton = ["config.example.json"]
