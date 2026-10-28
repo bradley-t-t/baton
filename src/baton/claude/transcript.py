@@ -149,24 +149,62 @@ def blocked_calls(entries, never_patterns=()) -> list:
     return out
 
 
-def interrupted(entries) -> bool:
-    """The turn was stopped by a classifier, a refusal stop_reason, or an API error. Such a
-    stop is not Claude declining the task, so it is never handed off. Pass the current turn,
-    not the whole session, or one stop early on would block every later handoff."""
-    for e in entries or []:
-        if not isinstance(e, dict):
+# How Claude Code records Anthropic's safeguards blocking a reply: the "API Error" text
+# shown in its place, and the notice it adds when it retries once.
+SAFEGUARDS_ERROR = re.compile(r"^API Error\b.*?(?:safeguards? (?:flagged|stopped|blocked)|can't respond to this message)",
+                              re.I | re.S)
+SAFEGUARDS_NOTICE = re.compile(r"\bsafeguards? (?:stopped|flagged|blocked)\b", re.I)
+API_ERROR = re.compile(r"^API Error\b", re.I)
+INTERRUPT = re.compile(r"^\[Request interrupted\b", re.I)
+
+
+def _texts(e: dict) -> list:
+    c = _message(e).get("content")
+    if isinstance(c, str):
+        return [c]
+    return [b.get("text", "") for b in c or [] if isinstance(b, dict) and isinstance(b.get("text"), str)]
+
+
+def _assistant_end(e: dict) -> str | None:
+    m = _message(e)
+    text = "\n".join(_texts(e)).strip()
+    refusal = m.get("stop_reason") == "refusal" or (m.get("stop_details") or {}).get("type") == "refusal"
+    if SAFEGUARDS_ERROR.search(text) or refusal:
+        return "safeguards"
+    if e.get("isApiErrorMessage") or e.get("error") or API_ERROR.search(text) \
+            or m.get("stop_reason") in ("max_tokens", "error"):
+        return "error"
+    return None
+
+
+def turn_end(entries, reply: str = "") -> str | None:
+    """How the turn ended, when not with an ordinary reply: "safeguards" (Anthropic's
+    safeguards refused it), "interrupted" (the person pressed Escape) or "error" (another
+    API error: overloaded, a rate limit, the network, a login). reply is the text being
+    checked, which may not be in the transcript yet. Only entries Claude Code writes for
+    the conversation count; an api-request-blob repeats old messages and says nothing
+    about this turn. Pass the current turn, not the whole session."""
+    reply = (reply or "").strip()
+    if SAFEGUARDS_ERROR.search(reply):
+        return "safeguards"
+    if API_ERROR.search(reply):
+        return "error"
+    for e in reversed(entries or []):
+        if not isinstance(e, dict) or e.get("isSidechain"):
             continue
-        m = _message(e)
-        if e.get("isApiErrorMessage") or (e.get("type") == "assistant" and e.get("error")):
-            return True
-        if e.get("type") == "assistant" and m.get("stop_reason") in ("refusal", "max_tokens", "error"):
-            return True
-        c = m.get("content")
-        texts = [c] if isinstance(c, str) else [x.get("text", "") for x in c or [] if isinstance(x, dict)]
-        if any(isinstance(x, str) and re.search(r"stopped by a (?:safety )?classifier|^API Error\b", normalize(x), re.I | re.M)
-               for x in texts):
-            return True
-    return False
+        kind = e.get("type")
+        if kind == "assistant":
+            return _assistant_end(e)
+        if kind == "system":
+            if e.get("subtype") == "model_refusal_no_fallback":
+                return "safeguards"
+            if SAFEGUARDS_NOTICE.search(str(e.get("content") or "")):
+                # "... continuing once with that noted": a retry is under way, and its
+                # reply decides. Without that, the stop is where the turn ended.
+                return None if re.search(r"\bcontinuing\b", str(e.get("content"))) else "safeguards"
+        elif kind == "user" and any(INTERRUPT.search(t.strip()) for t in _texts(e)):
+            return "interrupted"
+    return None
 
 
 def clip(v, cap: int) -> str:

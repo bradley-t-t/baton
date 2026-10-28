@@ -12,7 +12,9 @@ On a refusal the request goes to the provider with the last 4 messages and 10 to
 
 `Stop` hands off only when display didn't, which happens when display timed out or never saw the reply. It never blocks, so you don't get "Hook re-prompted Claude" rows.
 
-Only the current turn counts. A turn a classifier stopped, a tool call you turned down, a write Holdback already refused: none of those say anything about the reply being checked now. Questions about Baton itself are left alone, and a reply that failed for a technical reason it names (a missing file, a network error) isn't a refusal.
+When Anthropic's safeguards stop a turn, Claude Code shows "API Error: ... safeguards flagged this message" where the reply would be. That's a refusal too, so your message for that turn goes to the provider and its answer is drawn in place of the error. Claude Code runs `StopFailure` rather than `Stop` on such a turn, so `MessageDisplay` is what delivers it. If Claude Code retries once after the stop and the retry answers, that answer stands.
+
+Only the current turn counts. A safeguards stop earlier in the session, a tool call you turned down, a write Holdback already refused: none of those say anything about the reply being checked now. A turn you interrupted, or one that ended in another API error (overloaded, a rate limit, the network, a login), is left alone. Questions about Baton itself are left alone too, and a reply that failed for a technical reason it names (a missing file, a network error) isn't a refusal.
 
 ## Running commands
 
