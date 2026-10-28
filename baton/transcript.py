@@ -47,6 +47,11 @@ def _message(e: dict) -> dict:
     return m if isinstance(m, dict) else {}
 
 
+# Text Claude Code puts in a user entry when a turn is cut off. It is not the person talking.
+STOP_NOTICE = re.compile(r"^(?:your (?:previous )?response (?:above )?was stopped by a (?:safety )?classifier|API Error\b)",
+                         re.I)
+
+
 def is_person_message(e) -> bool:
     if not isinstance(e, dict) or e.get("type") != "user" or e.get("isMeta") or e.get("isSidechain"):
         return False
@@ -54,7 +59,8 @@ def is_person_message(e) -> bool:
     if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
         return False
     text = person_text(e)
-    return bool(text) and not text.startswith(("<", "[Request interrupted", "Stop hook feedback"))
+    return (bool(text) and not text.startswith(("<", "[Request interrupted", "Stop hook feedback"))
+            and not STOP_NOTICE.search(text))
 
 
 def person_text(e: dict) -> str:
@@ -146,7 +152,8 @@ def blocked_calls(entries, never_patterns=()) -> list:
 
 def interrupted(entries) -> bool:
     """The turn was stopped by a classifier, a refusal stop_reason, or an API error. Such a
-    stop is not Claude declining the task, so it is never handed off."""
+    stop is not Claude declining the task, so it is never handed off. Pass the current turn,
+    not the whole session, or one stop early on would block every later handoff."""
     for e in entries or []:
         if not isinstance(e, dict):
             continue
