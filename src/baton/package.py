@@ -1,4 +1,5 @@
-"""How this copy of Baton was installed, and the commands that reinstall or remove it.
+"""How this copy of Baton was installed, the commands that reinstall or remove it, and
+the PATH line install.sh adds to shell startup files.
 
 install.sh installs with pipx or uv from the main branch on GitHub; the commands here
 are the same ones, so an update lands exactly where the installer put Baton.
@@ -60,6 +61,41 @@ def upgrade_command() -> list:
     if how == "uv" and path:
         return [path, "tool", "install", "--force", "--reinstall", source()]
     return []
+
+
+# install.sh ends the PATH line it adds with this, so only Baton's own line is removed.
+PATH_MARK = "# added by Baton"
+
+
+def startup_files() -> list:
+    """Every shell startup file install.sh may have added its PATH line to."""
+    home = Path.home()
+    zdot = Path(os.environ.get("ZDOTDIR") or home)
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    files = [zdot / ".zshrc", home / ".zshrc", home / ".bashrc", home / ".bash_profile",
+             home / ".bash_login", home / ".profile", config / "fish" / "conf.d" / "baton.fish"]
+    return list(dict.fromkeys(files))
+
+
+def remove_path_lines() -> list:
+    """Take Baton's PATH line out of the startup files. A file left empty that only
+    Baton wrote (fish's conf.d/baton.fish) is deleted. Returns the files changed."""
+    changed = []
+    for f in startup_files():
+        try:
+            text = f.read_text()
+        except OSError:
+            continue
+        lines = text.splitlines(keepends=True)
+        kept = [ln for ln in lines if not ln.rstrip().endswith(PATH_MARK)]
+        if kept == lines:
+            continue
+        if not "".join(kept).strip() and f.name == "baton.fish":
+            f.unlink()
+        else:
+            f.write_text("".join(kept))
+        changed.append(str(f))
+    return changed
 
 
 def removal_command() -> list:
