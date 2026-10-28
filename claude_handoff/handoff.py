@@ -151,7 +151,7 @@ def complete(r: dict, reply: str, user: str, cwd: str, entries, history, cfg: di
             return label(provider.name, ran["summary"])
         # Prefer the runner's clean summary (e.g. "Deleted /path.") over provider prose
         # that still contains fences or leftover refusal wording.
-        body = ran["summary"] or actions.strip_fences(answer) or "Done."
+        body = ran["summary"] or "Done."
         drop_pending(hid)
         log("delivered %s from %s via actions (%d chars)" % (hid, provider.name, len(body)))
         return label(provider.name, body)

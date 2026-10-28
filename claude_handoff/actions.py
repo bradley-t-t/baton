@@ -142,84 +142,182 @@ def scan_script_commands(body: str) -> list:
     return cmds
 
 
-def summarize_success(cmds: list, results: list, prose: str = "") -> str:
-    """Short user-facing line. Prefer clean provider prose; else describe what ran."""
-    prose = (prose or "").strip()
-    # Provider often writes "Created 5 files…" before the fence — use that if present.
-    if prose and len(prose) < 500 and not prose.lower().startswith("sure"):
-        # Drop leftover meta lines.
-        keep = []
-        for line in prose.splitlines():
-            s = line.strip()
-            if not s:
-                continue
-            if re.search(r"\b(?:here(?:'s| is)|runn?ing|execut)", s, re.I) and len(s) < 40:
-                continue
-            keep.append(s)
-        if keep:
-            return "\n".join(keep)
+OPERATORS = {"&&", "||", "|", ";", "&", ";;", "|&"}
+SHELL_SYNTAX = re.compile(r"&&|\|\||(?<![\w.])\|(?![\w.])|;\s|\$\(|`[^`]*\s[^`]*`|\s2?>\s*/dev/null|^\s*(?:rm|ls|grep|echo|printf|mv|cp|mkdir|touch|cat|sudo)\s")
+GLOB = re.compile(r"[*?\[]")
 
-    created, deleted, other = [], [], []
+
+def _segments(cmd: str) -> list:
+    """Split one command line into simple commands at && || | ; so a chain like
+    `rm f && ls dir | grep f || echo ok` never reads as paths of rm."""
+    try:
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        toks = cmd.split()
+    segs, cur = [], []
+    for tok in toks:
+        if tok in OPERATORS or set(tok) <= set("&|;"):
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(tok)
+    if cur:
+        segs.append(cur)
+    return segs
+
+
+def _verb_args(parts: list):
+    """(executable name, args) of a simple command, skipping sudo/env/VAR= prefixes."""
+    i = 0
+    while i < len(parts):
+        tok = parts[i]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
+            i += 1
+            continue
+        name = Path(tok.lstrip("./")).name
+        if name in PREFIXES or name in KEYWORDS:
+            i += 1
+            continue
+        return name, parts[i + 1:]
+    return "", []
+
+
+def _is_redir(tok: str) -> bool:
+    return bool(tok) and set(tok) <= set("<>&|") and ("<" in tok or ">" in tok)
+
+
+def _redirect_targets(args: list) -> list:
+    out = []
+    for i, a in enumerate(args):
+        if _is_redir(a) and ">" in a and "&" not in a and i + 1 < len(args):
+            if args[i + 1] != "/dev/null" and not (i > 0 and args[i - 1] == "2"):
+                out.append(args[i + 1])
+    return out
+
+
+def _plain_args(args: list) -> list:
+    out, skip = [], False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if _is_redir(a):
+            skip = True
+            continue
+        if a.isdigit() and i + 1 < len(args) and _is_redir(args[i + 1]):
+            continue
+        if a.startswith("-"):
+            continue
+        out.append(os.path.expanduser(a))
+    return out
+
+
+def _nice(path: str) -> str:
+    """~-relative path; Trash items read as a name plus where they were."""
+    home = os.path.expanduser("~")
+    p = os.path.normpath(path)
+    if p == home or p.startswith(home + os.sep):
+        p = "~" + p[len(home):]
+    return p
+
+
+def _in_trash(path: str) -> bool:
+    p = os.path.normpath(os.path.expanduser(path))
+    return "/.Trash/" in p + "/" or "/.Trashes/" in p + "/" or "/.local/share/Trash/" in p + "/"
+
+
+def _verify_gone(paths: list) -> list:
+    """Paths that still exist after the run (globs and $vars are not checked)."""
+    return [p for p in paths if not GLOB.search(p) and "$" not in p and os.path.lexists(p)]
+
+
+def outcome(cmds: list, cwd: str = "") -> dict:
+    """What the commands did to which paths, read from parsed simple commands."""
+    deleted, created, moved, copied = [], [], [], []
     for cmd in cmds:
-        fw = first_word(cmd)
-        try:
-            parts = shlex.split(cmd, posix=True)
-        except ValueError:
-            parts = cmd.split()
-        args = []
-        i = 0
-        while i < len(parts):
-            tok = parts[i]
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
-                i += 1
-                continue
-            name = Path(tok.lstrip("./")).name
-            if name in PREFIXES or tok.startswith("-") or name in KEYWORDS:
-                if name == "env":
-                    i += 1
-                    while i < len(parts) and "=" in parts[i]:
-                        i += 1
-                    continue
-                i += 1
-                continue
-            args = parts[i + 1:]
-            break
-        paths = [os.path.expanduser(a) for a in args if a and not a.startswith("-")]
-        # printf/echo redirects: look for > path in the raw command
-        redir = re.findall(r"(?:^|[\s])>(?:\|)?\s*([^\s;|&]+)", cmd)
-        redir_paths = [os.path.expanduser(p.strip("\"'")) for p in redir]
-        if fw == "rm" and paths:
-            deleted.extend(paths)
-        elif fw in ("mkdir", "touch") and paths:
-            created.extend(paths)
-        elif fw in ("printf", "echo") and redir_paths:
-            created.extend(redir_paths)
-        elif fw == "cat" and redir_paths:
-            created.extend(redir_paths)
-        elif fw in ("mv",) and len(paths) >= 2:
-            other.append("Moved %s to %s." % (paths[0], paths[-1]))
-        elif fw in ("cp",) and len(paths) >= 2:
-            other.append("Copied %s to %s." % (paths[0], paths[-1]))
+        for seg in _segments(cmd):
+            verb, args = _verb_args(seg)
+            absol = lambda q: q if (os.path.isabs(q) or not cwd or "$" in q) else os.path.join(cwd, q)
+            paths = [absol(q) for q in _plain_args(args)]
+            redir = [absol(os.path.expanduser(r)) for r in _redirect_targets(args)]
+            if verb in ("rm", "unlink", "rmdir", "trash") and paths:
+                deleted.extend(paths)
+            elif verb in ("mkdir", "touch") and paths:
+                created.extend(paths)
+            elif verb in ("printf", "echo", "cat", "tee") and (redir or (verb == "tee" and paths)):
+                created.extend(redir or paths)
+            elif verb == "mv" and len(paths) >= 2:
+                moved.append((paths[0], paths[-1]))
+            elif verb == "cp" and len(paths) >= 2:
+                copied.append((paths[0], paths[-1]))
+    return {"deleted": deleted, "created": created, "moved": moved, "copied": copied}
 
+
+def _clean_prose(prose: str) -> str:
+    """Provider prose with any shell-looking line dropped."""
+    keep = []
+    for line in (prose or "").splitlines():
+        s = line.strip()
+        if not s or SHELL_SYNTAX.search(s):
+            continue
+        if re.search(r"\b(?:here(?:'s| is)|runn?ing|execut)", s, re.I) and len(s) < 40:
+            continue
+        keep.append(s)
+    return "\n".join(keep)
+
+
+def summarize_success(cmds: list, results: list, prose: str = "", cwd: str = "") -> str:
+    """One plain sentence per effect, built from what ran and checked on disk.
+    Never echoes command text."""
+    o = outcome(cmds, cwd)
     lines = []
-    if deleted:
-        lines.append("Deleted %s." % " ".join(deleted))
+    if o["deleted"]:
+        still = _verify_gone(o["deleted"])
+        gone = [p for p in o["deleted"] if p not in still]
+        trash = [p for p in gone if _in_trash(p)]
+        plain = [p for p in gone if not _in_trash(p)]
+        if plain:
+            lines.append("Deleted %s." % ", ".join(_nice(p) for p in plain))
+        if trash:
+            names = ", ".join(Path(p).name for p in trash)
+            lines.append("Permanently deleted %s (it was in the Trash)." % names
+                         if len(trash) == 1 else
+                         "Permanently deleted %s (they were in the Trash)." % names)
+        if still:
+            lines.append("Couldn't delete %s; it's still there." % ", ".join(_nice(p) for p in still))
+    created = [p for p in o["created"] if "$" not in p]
     if created:
-        # Collapse many files under the same parent.
         if len(created) >= 3:
-            parent = str(Path(created[0]).expanduser().parent)
+            parent = _nice(str(Path(created[0]).parent))
             names = [Path(p).name for p in created]
             lines.append("Created %d files in %s: %s." % (len(created), parent, ", ".join(names)))
         else:
-            lines.append("Created %s." % " ".join(created))
-    lines.extend(other)
+            lines.append("Created %s." % ", ".join(_nice(p) for p in created))
+    for a, b in o["moved"]:
+        lines.append("Moved %s to %s." % (_nice(a), _nice(b)))
+    for a, b in o["copied"]:
+        lines.append("Copied %s to %s." % (_nice(a), _nice(b)))
     if lines:
         return "\n".join(lines)
-    out = ""
-    for r in results:
-        out += ((r.get("stdout") or "") + (r.get("stderr") or ""))
-    out = out.strip()
-    return out[:800] if out else "Done."
+    clean = _clean_prose(prose)
+    if clean and len(clean) < 500 and not clean.lower().startswith("sure"):
+        return clean
+    return "Done."
+
+
+def failure_line(stderr: str, code) -> str:
+    """One plain line for a failed run, without the command text."""
+    msg = ""
+    for line in (stderr or "").splitlines():
+        s = re.sub(r"^(?:bash|sh|/[^:]*\.sh)(?::\s*line\s*\d+)?:\s*", "", line.strip())
+        if s:
+            msg = s
+            break
+    msg = msg[:200].rstrip(".")
+    return ("It failed: %s." % msg) if msg else ("It failed (exit %s)." % code)
 
 
 def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict:
@@ -256,7 +354,7 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
                 "summary": msg, "log": msg}
     rejected = [c for c in all_cmds if first_word(c) not in allow]
     if rejected:
-        msg = "Command not allowed: %s" % first_word(rejected[0])
+        msg = "It wasn't run: %s is not allowed here." % first_word(rejected[0])
         log("run_actions rejected: %s" % rejected[0][:80])
         return {"ran": True, "ok": False, "commands": [], "results": [],
                 "summary": msg, "log": msg}
@@ -288,22 +386,21 @@ def run_allowed(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict
         log("run_actions script %d cmds -> %s" % (len(allowed_cmds), p.returncode))
         if p.returncode != 0:
             # Prefer a short cmd hint from the first allowed line for the error.
-            hint = allowed_cmds[0][:120] if allowed_cmds else "script"
-            err = (rec["stderr"] or rec["stdout"] or "(no output)").strip()[:500]
-            summary = "Command failed (`%s`, exit %s): %s" % (hint, p.returncode, err)
+            summary = failure_line(rec["stderr"] or rec["stdout"], p.returncode)
             return {"ran": True, "ok": False, "commands": allowed_cmds,
                     "results": [rec], "summary": summary, "log": log_blob}
         prose = strip_fences(text)
-        summary = summarize_success(allowed_cmds, [rec], prose=prose)
-        return {"ran": True, "ok": True, "commands": allowed_cmds, "results": [rec],
+        summary = summarize_success(allowed_cmds, [rec], prose=prose, cwd=workdir)
+        still = _verify_gone(outcome(allowed_cmds, workdir)["deleted"])
+        return {"ran": True, "ok": not still, "commands": allowed_cmds, "results": [rec],
                 "summary": summary, "log": log_blob}
     except subprocess.TimeoutExpired:
-        summary = "Command timed out after %ss" % timeout
+        summary = "It failed: timed out after %ss." % timeout
         log("run_actions timeout")
         return {"ran": True, "ok": False, "commands": allowed_cmds, "results": [],
                 "summary": summary, "log": summary}
     except Exception as e:  # noqa: BLE001
-        summary = "Command error: %s: %s" % (type(e).__name__, e)
+        summary = "It failed: %s." % e
         log("run_actions error: %s" % e)
         return {"ran": True, "ok": False, "commands": allowed_cmds, "results": [],
                 "summary": summary, "log": summary}

@@ -350,6 +350,60 @@ class Actions(unittest.TestCase):
         self.assertFalse(out["ran"])
         self.assertEqual(out["summary"], "")
 
+class CleanResult(unittest.TestCase):
+    """The shown result is plain sentences about effects, never command text."""
+
+    CFG = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
+                           "allow": ALLOW}}
+
+    def test_trash_chain_reads_clean(self):
+        from claude_handoff.actions import run_allowed
+        td = tempfile.mkdtemp()
+        trash = Path(td) / ".Trash"
+        trash.mkdir()
+        f = trash / "claude-handoff-live-test-71737.txt"
+        f.write_text("x")
+        fence = ("```bash\nrm -f %s && ls %s | grep claude-handoff-live-test-71737 "
+                 "|| echo permanently deleted\n```" % (f, trash))
+        out = run_allowed("Done.\n" + fence, self.CFG, "xai", cwd=td)
+        self.assertTrue(out["ok"], out["summary"])
+        self.assertFalse(f.exists())
+        self.assertEqual(out["summary"],
+                         "Permanently deleted claude-handoff-live-test-71737.txt (it was in the Trash).")
+
+    def test_plain_delete_names_path(self):
+        from claude_handoff.actions import run_allowed
+        td = tempfile.mkdtemp()
+        f = Path(td) / "a.txt"
+        f.write_text("x")
+        out = run_allowed("```bash\nrm -f %s; ls %s\n```" % (f, td), self.CFG, "xai", cwd=td)
+        self.assertEqual(out["summary"], "Deleted %s." % f)
+
+    def test_still_exists_is_failure(self):
+        from claude_handoff.actions import run_allowed
+        td = tempfile.mkdtemp()
+        d = Path(td) / "keep"
+        d.mkdir()
+        (d / "x").write_text("x")
+        # rm without -r on a dir fails, but `|| true` hides the exit code
+        out = run_allowed("```bash\nrm %s 2>/dev/null || true\n```" % d, self.CFG, "xai", cwd=td)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["summary"], "Couldn't delete %s; it's still there." % d)
+
+    def test_failure_has_no_command_text(self):
+        from claude_handoff.actions import run_allowed
+        td = tempfile.mkdtemp()
+        out = run_allowed("```bash\nrm %s/missing.txt && echo gone\n```" % td, self.CFG, "xai", cwd=td)
+        self.assertFalse(out["ok"])
+        self.assertTrue(out["summary"].startswith("It failed: "), out["summary"])
+        self.assertNotIn("&&", out["summary"])
+        self.assertNotIn("echo", out["summary"])
+        self.assertEqual(out["summary"].count("\n"), 0)
+
+    def test_prose_shell_lines_dropped(self):
+        from claude_handoff.actions import _clean_prose
+        self.assertEqual(_clean_prose("rm -f x && ls y | grep x || echo ok\nAll set."), "All set.")
+
 
 if __name__ == "__main__":
     unittest.main()
