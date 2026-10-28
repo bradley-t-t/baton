@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+from .. import models
 from .base import DEFAULT_SYSTEM, Provider, ProviderError, http_json
 
 
 class OpenAICompatibleProvider(Provider):
     DEFAULT_BASE = "https://api.openai.com/v1"
-    DEFAULT_MODEL = "gpt-4o-mini"
 
     def base_url(self) -> str:
         return (self.cfg.get("base_url") or self.DEFAULT_BASE).rstrip("/")
 
     def model(self) -> str:
-        return self.cfg.get("model") or self.DEFAULT_MODEL
+        m = self.cfg.get("model")
+        if not models.is_auto(m):
+            return m
+        m, _ = models.resolve(dict(self.cfg, base_url=self.base_url()), self.api_key())
+        if not m:
+            raise ProviderError("%s: no model found at %s/models; set a model in the config"
+                                % (self.name, self.base_url()))
+        return m
 
     def complete(self, task: str, context: dict = None, system: str = "") -> str:
         key = self.api_key()
@@ -41,12 +48,10 @@ class OpenAICompatibleProvider(Provider):
 
 class OpenAIProvider(OpenAICompatibleProvider):
     DEFAULT_BASE = "https://api.openai.com/v1"
-    DEFAULT_MODEL = "gpt-5"
 
 
 class XAIProvider(OpenAICompatibleProvider):
     DEFAULT_BASE = "https://api.x.ai/v1"
-    DEFAULT_MODEL = "grok-4"
 
     def complete(self, task: str, context: dict = None, system: str = "") -> str:
         # xAI always needs a key.

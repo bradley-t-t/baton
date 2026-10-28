@@ -51,8 +51,13 @@ def checks(online: bool = False) -> list:
             add(FAIL, "Provider", "%s has unknown type %r" % (pcfg["name"], pcfg.get("type")))
         else:
             where = pcfg.get("base_url") or ""
+            from . import models
+            model = pcfg.get("model") or ""
+            if models.is_auto(model):
+                now = models.cached(pcfg)
+                model = "auto" + ((", now " + now) if now else "")
             add(OK, "Provider", "%s (%s, model %s)%s" % (
-                pcfg["name"], pcfg["type"], pcfg.get("model") or "default",
+                pcfg["name"], pcfg["type"], model,
                 (" at " + where) if where else ""))
         key_env = pcfg.get("api_key_env") or ""
         if key_env:
@@ -77,12 +82,19 @@ def checks(online: bool = False) -> list:
     if not ra.get("enabled"):
         add(OK, "Commands", "Off. The provider's commands are never run.")
     else:
+        from .actions import allows_all
         allow = ra.get("allow")
-        n = len(allow) if isinstance(allow, list) else sum(
-            len(v or []) for v in (allow or {}).values()) if isinstance(allow, dict) else 0
-        add(OK if n else WARN, "Commands",
-            "On%s, %d allowed, up to %s per reply" % (
-                " (read-only)" if ra.get("read_only") else "", n, ra.get("max_commands", 20)))
+        name = (pcfg or {}).get("name") or ""
+        if allows_all(cfg, name):
+            add(OK, "Commands", "On, any command (full permissions), up to %s per reply"
+                % ra.get("max_commands", 20))
+        else:
+            n = len(allow) if isinstance(allow, list) else sum(
+                len(v) for v in (allow or {}).values() if isinstance(v, list)) \
+                if isinstance(allow, dict) else 0
+            add(OK if n else WARN, "Commands",
+                "On%s, %d allowed, up to %s per reply" % (
+                    " (read-only)" if ra.get("read_only") else "", n, ra.get("max_commands", 20)))
 
     settings = inst.settings_path()
     data = inst._load(settings)
