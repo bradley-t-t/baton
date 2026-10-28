@@ -3,8 +3,8 @@
   UserPromptSubmit  -> remember the request (no instructions injected)
   MessageDisplay    -> on a refusal, hand off and show `<result>\\n(via Grok)`;
                        blank later narration in the same turn
-  Stop              -> first refusal: one chance; then handoff if display did not.
-                       If the result is already on screen, allow stop (no relay).
+  Stop              -> never blocks. Hands off (no block) only if display did not,
+                       so the next display draws the result.
 """
 
 from __future__ import annotations
@@ -111,20 +111,11 @@ def _check_expectation(session: str, reply: str):
         clear_expectation(session)
         log("relay skip; already displayed session=%s" % session[:8])
         return None
-    retries = int(rec.get("retries") or 0)
-    max_retries = int(rec.get("max_retries") or 5)
-    if retries >= max_retries:
-        # Give-up must not leave a blank screen: mark the expected text displayed
-        # so the next MessageDisplay (or a redraw) forces it on screen.
-        mark_displayed(session, expected)
-        clear_expectation(session)
-        log("relay gave up; force displayed session=%s after %d mismatches"
-            % (session[:8], retries))
-        return None
-    updated = bump_expectation_retry(session) or rec
-    retries = int(updated.get("retries") or 0)
-    log("relay mismatch session=%s retry=%d/%d" % (session[:8], retries, max_retries))
-    return {"decision": "block", "reason": relay_instruction(expected)}
+    # Never block for exact relay: the display hook draws the result itself.
+    mark_displayed(session, expected)
+    clear_expectation(session)
+    log("relay skip; display owns result session=%s" % session[:8])
+    return None
 
 
 def _handoff_now(reply, entries, user, cwd, session, cfg):
@@ -200,9 +191,7 @@ def on_stop():
 
     declining = bool(reply and (reason(reply, entries, user, entries, cfg) or skipped_check(reply)))
     if declining:
-        chance = _first_chance(session, user, reply)
-        if chance:
-            return chance
+        # No Stop block (each block is a visible "Hook re-prompted Claude" row).
         # Display usually already handed off; if not (timeout/miss), do it here
         # and mark displayed so the next MessageDisplay can draw the result.
         return _handoff_now(reply, entries, user, cwd, session, cfg)

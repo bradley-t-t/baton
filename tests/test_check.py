@@ -272,28 +272,24 @@ class StopRefusalChance(unittest.TestCase):
         raw = out.getvalue()
         return rc, (json.loads(raw) if raw.strip() else None)
 
-    def test_first_refusal_is_chance_not_handoff(self):
+    def test_first_refusal_never_blocks(self):
         from claude_handoff.state import (
-            clear_expectation, clear_refusal_chance, clear_said, remember_request,
-            get_expectation,
+            clear_expectation, clear_refusal_chance, clear_said, clear_displayed,
+            remember_request, get_displayed,
         )
-        from claude_handoff.refusal import REFUSAL_CHANCE
         session = "chance-1"
-        clear_expectation(session)
-        clear_refusal_chance(session)
-        clear_said(session)
+        for f in (clear_expectation, clear_refusal_chance, clear_said, clear_displayed):
+            f(session)
         remember_request(session, "Permanently delete /tmp/x")
-        reply = DECLINES["still_not_going_to"]
         td, path = self._write_transcript([
             {"type": "user", "message": {"content": "Permanently delete /tmp/x"}},
             {"type": "assistant", "message": {"content": [
-                {"type": "text", "text": reply}]}},
+                {"type": "text", "text": DECLINES["still_not_going_to"]}]}},
         ])
         event = {"session_id": session, "transcript_path": str(path), "cwd": td}
         rc, payload = self._stop(event)
-        self.assertEqual(payload["decision"], "block")
-        self.assertEqual(payload["reason"], REFUSAL_CHANCE)
-        self.assertIsNone(get_expectation(session))
+        self.assertIsNone(payload)  # no Stop block → no re-prompt row
+        self.assertTrue(get_displayed(session)["result"].endswith("(via Grok)"))
 
     def test_second_refusal_hands_off(self):
         from claude_handoff.state import (

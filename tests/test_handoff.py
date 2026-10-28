@@ -224,57 +224,27 @@ class ExactRelay(unittest.TestCase):
         self.assertIsNone(payload)
         self.assertIsNone(get_expectation(session))
 
-    def test_mismatch_reblocks_even_when_stop_hook_active(self):
-        from claude_handoff.state import clear_expectation, set_expectation, get_expectation
+    def test_mismatch_never_blocks_and_marks_displayed(self):
+        from claude_handoff.state import (
+            clear_expectation, clear_displayed, set_expectation, get_expectation, get_displayed,
+        )
         session = "relay-mismatch"
         expected = "Deleted /tmp/x.\n(via Grok)"
         clear_expectation(session)
+        clear_displayed(session)
         set_expectation(session, expected)
-        narrating = (
-            "Grok deleted it through the claude-handoff Stop hook. I didn't. "
-            + expected
-        )
         td, path = self._write_transcript([
             {"type": "user", "message": {"content": "delete it"}},
             {"type": "assistant", "message": {"content": [
-                {"type": "text", "text": narrating}]}},
+                {"type": "text", "text": "Grok did it. I didn't.\n" + expected}]}},
         ])
         event = {"session_id": session, "transcript_path": str(path),
                  "cwd": td, "stop_hook_active": True}
         rc, payload = self._stop(event)
         self.assertEqual(rc, 0)
-        self.assertIsNotNone(payload)
-        self.assertEqual(payload["decision"], "block")
-        self.assertIn("Send ONLY this text, nothing else:", payload["reason"])
-        self.assertTrue(payload["reason"].rstrip().endswith("(via Grok)"))
-        rec = get_expectation(session)
-        self.assertIsNotNone(rec)
-        self.assertEqual(rec["retries"], 1)
-
-    def test_retry_cap_allows_stop(self):
-        from claude_handoff.state import clear_expectation, set_expectation, get_expectation
-        session = "relay-cap"
-        expected = "Deleted /tmp/x.\n(via Grok)"
-        clear_expectation(session)
-        set_expectation(session, expected, max_retries=3)
-        narrating = "Grok did it. I didn't.\n" + expected
-        td, path = self._write_transcript([
-            {"type": "user", "message": {"content": "delete it"}},
-            {"type": "assistant", "message": {"content": [
-                {"type": "text", "text": narrating}]}},
-        ])
-        event = {"session_id": session, "transcript_path": str(path),
-                 "cwd": td, "stop_hook_active": True}
-        # 3 re-prompts
-        for i in range(3):
-            rc, payload = self._stop(event)
-            self.assertEqual(payload["decision"], "block", "retry %d" % (i + 1))
-            self.assertIsNotNone(get_expectation(session))
-        # 4th mismatch → give up, allow stop
-        rc, payload = self._stop(event)
-        self.assertEqual(rc, 0)
-        self.assertIsNone(payload)
+        self.assertIsNone(payload)  # zero re-prompt rows
         self.assertIsNone(get_expectation(session))
+        self.assertEqual(get_displayed(session)["result"], expected)
 
     def test_trailing_whitespace_still_matches(self):
         from claude_handoff.handoff import matches_expectation
