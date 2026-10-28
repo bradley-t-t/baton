@@ -1,8 +1,11 @@
 """Baton's hooks in Claude Code's ~/.claude/settings.json: add, remove, inspect.
 
 Each hook runs `python3 -m baton.hooks <event>` with this package on PYTHONPATH, after
-sourcing ~/.config/baton/secrets.env when it exists. Other hooks in the file are kept,
-and the file is backed up before each change.
+sourcing ~/.config/baton/secrets.env when it exists. On Windows the hook starts Python
+directly (exec form: "command" plus "args"), with no shell, because Claude Code would
+otherwise run it through Git Bash or PowerShell depending on what is installed; the
+hook loads the secrets file itself. Other hooks in the file are kept, and the file is
+backed up before each change.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-from .. import keys
+from .. import keys, system
 
 # Strings that mark our own entries in the hooks lists. Baton used to be called
 # claude-handoff, so entries from an old install count as ours too: install replaces
@@ -53,8 +56,16 @@ def hook_command(event: str) -> str:
             % (new, new, old, old, run))
 
 
+def hook_args(event: str) -> list:
+    """The arguments of the Windows hook, whose command is this Python."""
+    return ["-m", "baton.hooks", HOOK_NAMES.get(event, "stop")]
+
+
 def hook_entry(event: str) -> dict:
-    h = {"type": "command", "command": hook_command(event)}
+    if system.windows():
+        h = {"type": "command", "command": sys.executable, "args": hook_args(event)}
+    else:
+        h = {"type": "command", "command": hook_command(event)}
     if event == "MessageDisplay":
         h["timeout"] = DISPLAY_TIMEOUT
     return {"hooks": [h]}
@@ -64,14 +75,23 @@ def has_marker(cmd) -> bool:
     return any(m in (cmd or "") for m in MARKERS)
 
 
+def command_text(h: dict) -> str:
+    """A hook's command as one line: the shell command, or an exec-form program and its
+    arguments with the program quoted."""
+    args = h.get("args")
+    if isinstance(args, list):
+        return " ".join(['"%s"' % h.get("command", "")] + [str(a) for a in args])
+    return str(h.get("command") or "")
+
+
 def is_ours(entry) -> bool:
     """True for a hooks-list entry that runs Baton (or claude-handoff)."""
     if not isinstance(entry, dict):
         return False
     for h in entry.get("hooks") or []:
-        if isinstance(h, dict) and has_marker(h.get("command")):
+        if isinstance(h, dict) and has_marker(command_text(h)):
             return True
-    return has_marker(entry.get("command"))
+    return has_marker(command_text(entry))
 
 
 def our_commands(data: dict, event: str) -> list:
@@ -81,14 +101,14 @@ def our_commands(data: dict, event: str) -> list:
         if not isinstance(e, dict):
             continue
         for h in (e.get("hooks") or [e]):
-            if isinstance(h, dict) and has_marker(h.get("command")):
-                out.append(h["command"])
+            if isinstance(h, dict) and has_marker(command_text(h)):
+                out.append(command_text(h))
     return out
 
 
 def read(path: Path | None = None) -> dict:
     try:
-        data = json.loads((path or settings_path()).read_text())
+        data = json.loads((path or settings_path()).read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -110,7 +130,7 @@ def _write(path: Path, data: dict) -> None:
         for old in backups(path)[:-KEEP_BACKUPS]:
             old.unlink()
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
 

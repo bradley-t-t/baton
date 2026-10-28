@@ -6,12 +6,14 @@ import getpass
 import os
 import sys
 
+from . import system
+
 
 def color_on(stream=None) -> bool:
     stream = stream or sys.stdout
     if os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
         return False
-    return hasattr(stream, "isatty") and stream.isatty()
+    return hasattr(stream, "isatty") and stream.isatty() and system.ansi_colors()
 
 
 def _c(code: str, text: str) -> str:

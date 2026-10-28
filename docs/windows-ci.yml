@@ -1,0 +1,26 @@
+# Not active yet: copy to .github/workflows/test.yml to run the tests on Windows, macOS
+# and Linux. The suite passes on Windows 11 (Python 3.12). It is kept here because
+# pushing workflow files needs a token with the `workflow` scope.
+name: test
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Tests
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -t .

@@ -1,7 +1,8 @@
 """How this copy of Baton was installed, the commands that reinstall or remove it, and
-the PATH line install.sh adds to shell startup files.
+the PATH entry the installer adds: a line in shell startup files from install.sh, or a
+folder in the Windows user PATH from install.ps1.
 
-install.sh installs with pipx or uv from the main branch on GitHub; the commands here
+install.sh and install.ps1 install with pipx or uv from the main branch on GitHub; the commands here
 are the same ones, so an update lands exactly where the installer put Baton.
 """
 
@@ -12,12 +13,23 @@ import shutil
 import sys
 from pathlib import Path
 
+from . import system
+
 REPO = "https://github.com/bradley-t-t/baton"
 BRANCH = "main"
 PACKAGE_NAMES = ("claude-baton", "baton", "claude-handoff")
 
-# Where pipx and uv usually live, for hooks that run with a short PATH.
-TOOL_DIRS = ("~/.local/bin", "~/.cargo/bin", "/opt/homebrew/bin", "/usr/local/bin")
+# Where pipx and uv usually live, for hooks that run with a short PATH. Folders that
+# don't exist are skipped, so one list serves every system.
+TOOL_DIRS = ("~/.local/bin", "~/.cargo/bin", "/opt/homebrew/bin", "/usr/local/bin",
+             "~/AppData/Local/Microsoft/WinGet/Links", "~/scoop/shims")
+
+
+def install_command() -> str:
+    """The one-line installer for this system."""
+    if system.windows():
+        return "irm https://taylorurl.com/baton.ps1 | iex"
+    return "curl -fsSL https://taylorurl.com/baton | sh"
 
 
 def installer() -> str:
@@ -78,12 +90,15 @@ def startup_files() -> list:
 
 
 def remove_path_lines() -> list:
-    """Take Baton's PATH line out of the startup files. A file left empty that only
-    Baton wrote (fish's conf.d/baton.fish) is deleted. Returns the files changed."""
+    """Take Baton's PATH line out of the startup files, or on Windows its folder out of
+    the user PATH. A file left empty that only Baton wrote (fish's conf.d/baton.fish) is
+    deleted. Returns where it was removed from."""
+    if system.windows():
+        return ["your Windows user PATH"] if system.remove_user_path_entry() else []
     changed = []
     for f in startup_files():
         try:
-            text = f.read_text()
+            text = f.read_text(encoding="utf-8")
         except OSError:
             continue
         lines = text.splitlines(keepends=True)
@@ -93,7 +108,7 @@ def remove_path_lines() -> list:
         if not "".join(kept).strip() and f.name == "baton.fish":
             f.unlink()
         else:
-            f.write_text("".join(kept))
+            f.write_text("".join(kept), encoding="utf-8")
         changed.append(str(f))
     return changed
 

@@ -10,6 +10,11 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 
+POSIX = os.name != "nt"
+# For tests whose scripts or files only make sense on macOS and Linux: sh, file modes,
+# absolute POSIX paths inside a bash script. Windows has its own tests in test_windows.
+posix_only = unittest.skipUnless(POSIX, "macOS and Linux only")
+
 
 def fixture(name: str) -> str:
     return (HERE / "fixtures" / name).read_text()
@@ -202,7 +207,11 @@ class Home(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         self.settings = self.home / ".claude" / "settings.json"
-        env = {"HOME": str(self.home), "XDG_CONFIG_HOME": str(self.home / ".config"),
+        # USERPROFILE is Windows' HOME; APPDATA and LOCALAPPDATA live in it there.
+        env = {"HOME": str(self.home), "USERPROFILE": str(self.home),
+               "APPDATA": str(self.home / "AppData" / "Roaming"),
+               "LOCALAPPDATA": str(self.home / "AppData" / "Local"),
+               "XDG_CONFIG_HOME": str(self.home / ".config"),
                "XDG_STATE_HOME": str(self.home / ".local" / "state"),
                "CLAUDE_SETTINGS": str(self.settings), "NO_COLOR": "1"}
         self.env = mock.patch.dict(os.environ, env)

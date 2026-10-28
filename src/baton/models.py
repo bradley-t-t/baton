@@ -58,7 +58,7 @@ def _cache_key(pcfg: dict) -> str:
 
 def _read_cache() -> dict:
     try:
-        data = json.loads(_cache_path().read_text())
+        data = json.loads(_cache_path().read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -71,7 +71,7 @@ def _write_cache(key: str, model: str, at: float):
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2) + "\n")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         os.replace(tmp, p)
     except OSError:
         pass
