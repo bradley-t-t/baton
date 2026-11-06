@@ -100,11 +100,10 @@ def _secrets_file(add) -> None:
 
 def _commands(add, cfg: dict, pcfg: dict | None) -> None:
     ra = cfg.get("run_actions") or {}
-    cap = ra.get("max_commands", 20)
     if not ra.get("enabled"):
         add(OK, "Commands", "Off. The provider's commands are never run.")
     elif allows_all(cfg, (pcfg or {}).get("name") or ""):
-        add(OK, "Commands", "On, any command (full permissions), up to %s per reply" % cap)
+        add(OK, "Commands", "On, any command (full permissions), as many as a reply needs")
     else:
         allow = ra.get("allow")
         if isinstance(allow, list):
@@ -113,8 +112,8 @@ def _commands(add, cfg: dict, pcfg: dict | None) -> None:
             n = sum(len(v) for v in allow.values() if isinstance(v, list))
         else:
             n = 0
-        add(OK if n else WARN, "Commands", "On%s, %d allowed, up to %s per reply" % (
-            " (read-only)" if ra.get("read_only") else "", n, cap))
+        add(OK if n else WARN, "Commands", "On%s, %d allowed, as many as a reply needs" % (
+            " (read-only)" if ra.get("read_only") else "", n))
 
 
 def _hooks(add) -> None:

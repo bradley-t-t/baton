@@ -96,7 +96,7 @@ def _target_config() -> Path:
 def commands_block(mode: str, allow: list | None = None, current: dict | None = None) -> dict:
     ra = copy.deepcopy(current or {})
     ra.setdefault("timeout_seconds", 60)
-    ra.setdefault("max_commands", 20)
+    ra.pop("max_commands", None)  # there is no cap on commands any more
     if mode == "on":
         ra.update({"enabled": True, "allow": "all"})
         ra.pop("read_only", None)
@@ -296,7 +296,9 @@ def _commands(args, ra_now: dict) -> dict:
         return commands_block("custom", allow, ra_now)
     if args.reset or not ra_now or _is_old_default(ra_now):
         return commands_block("on", None, ra_now)
-    return copy.deepcopy(ra_now)
+    ra = copy.deepcopy(ra_now)
+    ra.pop("max_commands", None)  # there is no cap on commands any more
+    return ra
 
 
 def _review(spec: dict, name: str, pcfg: dict, resolved: str, ra: dict, mode: str,

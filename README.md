@@ -22,7 +22,7 @@ Only the current turn counts. A safeguards stop earlier in the session, a tool c
 
 For a task rather than a question, the provider answers with one fenced `bash` block (on Windows it runs in Git Bash, or as a `powershell` block when Git isn't installed). The body runs verbatim as a temp script under `set -e`, in Claude's working directory, so quoting, loops and `python3 -c` work as written. API keys are kept out of that script's environment.
 
-Every simple command has to be on the allow list unless `run_actions.allow` is `"all"`: each part of a chain or pipe, each command in a loop or `if` body, anything in `$(...)`. `max_commands` caps how many there are. A block that fails either check doesn't run at all, since skipping some lines would change what the rest does. The provider is told both limits up front, and a block that still misses them is reported to you rather than run.
+Every simple command has to be on the allow list unless `run_actions.allow` is `"all"`: each part of a chain or pipe, each command in a loop or `if` body, anything in `$(...)`. There's no cap on how many commands a block holds. A block with a command that isn't allowed doesn't run at all, since skipping some lines would change what the rest does. The provider is told the allow list up front, and a block that still misses it is reported to you rather than run.
 
 What you see is what the script printed. When it printed nothing, you get the provider's own sentence about it with any fenced blocks stripped, and failing that, `Done.`
 
@@ -100,7 +100,7 @@ baton setup --provider local --base-url http://localhost:11434/v1 --yes
 | `run_actions.enabled` | `true` | Run a `bash` block from the provider's reply in Claude's working directory |
 | `run_actions.allow` | `"all"` | `"all"`, or a list of the commands that may run. With a list, a block with any other command doesn't run at all. |
 | `run_actions.read_only` | | Set by `--commands read-only`; also refuses writing to files with `>` |
-| `run_actions.max_commands`, `run_actions.timeout_seconds` | `20`, `60` | Most commands in one block; how long a block may run |
+| `run_actions.timeout_seconds` | `60` | How long a block may run |
 | `context.user_messages`, `context.tool_calls` | `4`, `10` | How much recent context is sent with a request |
 
 Environment overrides: `BATON=0` (off), `BATON_PROVIDER`, `BATON_MODEL`, `BATON_TIMEOUT`, `BATON_JUDGE=0`, `BATON_RUN_ACTIONS=0|1`, `BATON_CONFIG`, `BATON_STATE`.

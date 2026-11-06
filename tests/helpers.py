@@ -112,10 +112,9 @@ def judge_says(declined: bool, task: str = ""):
         yield d
 
 
-def run_actions(cap=None, allow=None) -> dict:
+def run_actions(allow=None, **extra) -> dict:
     r = {"enabled": True, "timeout_seconds": 10, "allow": ALLOW if allow is None else allow}
-    if cap is not None:
-        r["max_commands"] = cap
+    r.update(extra)
     return {"run_actions": r}
 
 
