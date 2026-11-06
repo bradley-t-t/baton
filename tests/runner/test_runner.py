@@ -18,7 +18,7 @@ def eight(d):
 @posix_only  # the scripts name absolute POSIX paths
 class Run(unittest.TestCase):
     def test_allowlist_rejects(self):
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "allow": ["ls", "pwd"]}}
+        cfg = {"run_actions": {"enabled": True, "allow": ["ls", "pwd"]}}
         out = run_reply("```bash\nrm -rf /\n```", cfg, "xai")
         self.assertTrue(out["ran"])
         self.assertFalse(out["ok"])
@@ -28,7 +28,7 @@ class Run(unittest.TestCase):
         td = tempfile.mkdtemp()
         f = Path(td) / "to-delete.txt"
         f.write_text("bye")
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "allow": ALLOW}}
+        cfg = {"run_actions": {"enabled": True, "allow": ALLOW}}
         out = run_reply("Deleted it.\n```bash\nrm %s\n```" % f, cfg, "xai", cwd=td)
         self.assertTrue(out["ok"] and out["ran"])
         self.assertFalse(f.exists())
@@ -41,7 +41,7 @@ class Run(unittest.TestCase):
         target = Path(td) / "out.txt"
         code = "open(r'%s', 'w').write('alpha bravo\\n')" % target
         fence = "```bash\npython3 -c %s\n```\n" % repr(code)
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "allow": ALLOW}}
+        cfg = {"run_actions": {"enabled": True, "allow": ALLOW}}
         out = run_reply(fence, cfg, "xai", cwd=td)
         self.assertTrue(out["ok"], out["summary"])
         self.assertEqual(target.read_text().strip(), "alpha bravo")
@@ -55,7 +55,7 @@ class Run(unittest.TestCase):
             lines.append("printf '%%s\\n' '%s' > %s" % (w, path))
         lines.append("```")
         fence = "\n".join(lines) + "\n"
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "allow": ALLOW}}
+        cfg = {"run_actions": {"enabled": True, "allow": ALLOW}}
         out = run_reply(fence, cfg, "xai", cwd=td)
         self.assertTrue(out["ok"], out["summary"])
         for i, w in enumerate(words, 1):
@@ -73,7 +73,7 @@ class Run(unittest.TestCase):
             "done\n"
             "```\n"
         ) % td
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "allow": ALLOW}}
+        cfg = {"run_actions": {"enabled": True, "allow": ALLOW}}
         out = run_reply(fence, cfg, "xai", cwd=td)
         self.assertTrue(out["ok"], out["summary"])
         for i in (1, 2, 3):
@@ -90,7 +90,7 @@ class Run(unittest.TestCase):
 class ShownResult(unittest.TestCase):
     """What the person sees: the script's own output, else the provider's sentence."""
 
-    CFG = {"run_actions": {"enabled": True, "timeout_seconds": 10, "allow": ALLOW + ["grep"]}}
+    CFG = {"run_actions": {"enabled": True, "allow": ALLOW + ["grep"]}}
 
     def test_what_the_script_printed_is_the_result(self):
         td = tempfile.mkdtemp()
@@ -150,6 +150,16 @@ class NoCap(unittest.TestCase):
                         cwd=self.td)
         self.assertTrue(out["ran"] and out["ok"], out["summary"])
         self.assertEqual(len(list(Path(self.td).glob("g*.txt"))), 44)
+
+    def test_no_time_limit(self):
+        """An old time limit in the config is ignored: a block runs until it finishes."""
+        script = "```bash\nsleep 2\nprintf 'x\\n' > %s/late.txt\n```" % self.td
+        cfg = run_actions(allow="all", timeout_seconds=1)
+        with mock.patch("baton.runner.subprocess.run", wraps=__import__("subprocess").run) as run:
+            out = run_reply(script, cfg, "xai", cwd=self.td)
+        self.assertTrue(out["ran"] and out["ok"], out["summary"])
+        self.assertTrue((Path(self.td) / "late.txt").exists())
+        self.assertIsNone(run.call_args.kwargs.get("timeout"))
 
     def test_loop_runs(self):
         loop = ("```bash\nfor i in 1 2 3 4 5 6 7 8; do printf 'x\\n' > %s/f$i.txt; done\n```"

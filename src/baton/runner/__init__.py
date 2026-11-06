@@ -6,7 +6,8 @@ Windows that bash is Git Bash; without Git Bash the provider is asked for a
 ```powershell fence instead, and PowerShell runs it.
 Every simple command (each part of a chain, pipe, loop body or $(...)) has to be on
 the allow list unless run_actions.allow is "all". There is no cap on how many commands
-a block may hold. A block that fails a check is not run at all.
+a block may hold, and no time limit: it runs until it finishes. A block that fails a
+check is not run at all.
 
 What the person sees afterwards is what the script printed, or, when it printed
 nothing, the sentence the provider wrote about it, put in the past tense.
@@ -45,8 +46,7 @@ def _allow_value(cfg: dict, provider_name: str):
 
 
 def allows_all(cfg: dict, provider_name: str) -> bool:
-    """run_actions.allow is "all" (or a list holding "all" or "*"): any command may run.
-    The timeout still applies."""
+    """run_actions.allow is "all" (or a list holding "all" or "*"): any command may run."""
     raw = _allow_value(cfg, provider_name)
     if isinstance(raw, str):
         raw = [raw]
@@ -169,11 +169,11 @@ def run_reply(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict:
     workdir = os.path.expanduser(cwd) if cwd else os.getcwd()
     if not os.path.isdir(workdir):
         workdir = os.getcwd()
-    timeout = int(ra.get("timeout_seconds") or 60)
-    return _run_script(body, lines, text, cfg, workdir, timeout)
+    return _run_script(body, lines, text, cfg, workdir)
 
 
-def _run_script(body: str, lines: list, text: str, cfg: dict, workdir: str, timeout: int) -> dict:
+def _run_script(body: str, lines: list, text: str, cfg: dict, workdir: str) -> dict:
+    """Run the block to the end. There is no time limit on it."""
     started = time.monotonic()
     path = None
     try:
@@ -185,7 +185,7 @@ def _run_script(body: str, lines: list, text: str, cfg: dict, workdir: str, time
             f.write(SCRIPT_HEADER[shell] + body + ("" if body.endswith("\n") else "\n"))
         os.chmod(path, 0o700)
         p = subprocess.run(system.script_command(path), capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=timeout, cwd=workdir,
+                           encoding="utf-8", errors="replace", cwd=workdir,
                            env=script_env(cfg))
         output = ((p.stdout or "") + (("\n" + p.stderr) if p.stderr else ""))[:8000]
         output = "$ %s <fence script>\nexit %s (%.1fs)\n%s" % (
@@ -194,9 +194,6 @@ def _run_script(body: str, lines: list, text: str, cfg: dict, workdir: str, time
         if p.returncode != 0:
             return _result(True, False, failure_line(p.stderr or p.stdout, p.returncode), output)
         return _result(True, True, result_line(p.stdout, strip_fences(text)), output)
-    except subprocess.TimeoutExpired:
-        log("run_actions timeout")
-        return _result(True, False, "It failed: timed out after %ss." % timeout)
     except Exception as e:  # noqa: BLE001
         log("run_actions error: %s" % e)
         return _result(True, False, "It failed: %s." % e)

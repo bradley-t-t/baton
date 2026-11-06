@@ -19,8 +19,12 @@ class Install(unittest.TestCase):
         cmd = settings.hook_command("Stop")
         self.assertIn("secrets.env", cmd)
         self.assertIn("-m baton.hooks stop", cmd)
-        self.assertEqual(settings.hook_entry("MessageDisplay")["hooks"][0]["timeout"],
-                         settings.DISPLAY_TIMEOUT)
+        for event in ("Stop", "MessageDisplay"):
+            self.assertEqual(settings.hook_entry(event)["hooks"][0]["timeout"],
+                             settings.HOOK_TIMEOUT, event)
+        # Under the 2^31 ms ceiling of a JavaScript timer, and far past any real block.
+        self.assertLess(settings.HOOK_TIMEOUT * 1000, 2 ** 31)
+        self.assertGreater(settings.HOOK_TIMEOUT, 7 * 24 * 3600)
 
     def test_install_uninstall_idempotent(self):
         other = {"hooks": [{"type": "command", "command": "echo other"}]}
