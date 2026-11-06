@@ -1,4 +1,4 @@
-"""runner: the allow list, the command cap, read-only mode, and running the script."""
+"""runner: the allow list, no command cap, read-only mode, and running the script."""
 import json
 import os
 import tempfile
@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from baton.runner import allows_all, limits_note, max_commands, run_reply
+from baton.runner import allows_all, limits_note, run_reply
 from tests.helpers import ALLOW, posix_only, run_actions
 
 
@@ -18,8 +18,7 @@ def eight(d):
 @posix_only  # the scripts name absolute POSIX paths
 class Run(unittest.TestCase):
     def test_allowlist_rejects(self):
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "max_commands": 2,
-                               "allow": ["ls", "pwd"]}}
+        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "allow": ["ls", "pwd"]}}
         out = run_reply("```bash\nrm -rf /\n```", cfg, "xai")
         self.assertTrue(out["ran"])
         self.assertFalse(out["ok"])
@@ -29,8 +28,7 @@ class Run(unittest.TestCase):
         td = tempfile.mkdtemp()
         f = Path(td) / "to-delete.txt"
         f.write_text("bye")
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "max_commands": 5,
-                               "allow": ALLOW}}
+        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 5, "allow": ALLOW}}
         out = run_reply("Deleted it.\n```bash\nrm %s\n```" % f, cfg, "xai", cwd=td)
         self.assertTrue(out["ok"] and out["ran"])
         self.assertFalse(f.exists())
@@ -43,8 +41,7 @@ class Run(unittest.TestCase):
         target = Path(td) / "out.txt"
         code = "open(r'%s', 'w').write('alpha bravo\\n')" % target
         fence = "```bash\npython3 -c %s\n```\n" % repr(code)
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 5,
-                               "allow": ALLOW}}
+        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "allow": ALLOW}}
         out = run_reply(fence, cfg, "xai", cwd=td)
         self.assertTrue(out["ok"], out["summary"])
         self.assertEqual(target.read_text().strip(), "alpha bravo")
@@ -58,8 +55,7 @@ class Run(unittest.TestCase):
             lines.append("printf '%%s\\n' '%s' > %s" % (w, path))
         lines.append("```")
         fence = "\n".join(lines) + "\n"
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
-                               "allow": ALLOW}}
+        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "allow": ALLOW}}
         out = run_reply(fence, cfg, "xai", cwd=td)
         self.assertTrue(out["ok"], out["summary"])
         for i, w in enumerate(words, 1):
@@ -77,8 +73,7 @@ class Run(unittest.TestCase):
             "done\n"
             "```\n"
         ) % td
-        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
-                               "allow": ALLOW}}
+        cfg = {"run_actions": {"enabled": True, "timeout_seconds": 10, "allow": ALLOW}}
         out = run_reply(fence, cfg, "xai", cwd=td)
         self.assertTrue(out["ok"], out["summary"])
         for i in (1, 2, 3):
@@ -95,8 +90,7 @@ class Run(unittest.TestCase):
 class ShownResult(unittest.TestCase):
     """What the person sees: the script's own output, else the provider's sentence."""
 
-    CFG = {"run_actions": {"enabled": True, "timeout_seconds": 10, "max_commands": 20,
-                           "allow": ALLOW + ["grep"]}}
+    CFG = {"run_actions": {"enabled": True, "timeout_seconds": 10, "allow": ALLOW + ["grep"]}}
 
     def test_what_the_script_printed_is_the_result(self):
         td = tempfile.mkdtemp()
@@ -133,7 +127,7 @@ class ShownResult(unittest.TestCase):
 
 
 @posix_only
-class Cap(unittest.TestCase):
+class NoCap(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.mkdtemp()
 
@@ -143,20 +137,24 @@ class Cap(unittest.TestCase):
         self.assertEqual(len(list(Path(self.td).glob("f*.txt"))), 8)
         self.assertEqual(out["summary"], "Done.")
 
-    def test_over_cap_runs_nothing_and_says_so_plainly(self):
-        out = run_reply(eight(self.td), run_actions(cap=5), "xai", cwd=self.td)
-        self.assertTrue(out["ran"])
-        self.assertFalse(out["ok"])
-        self.assertEqual(out["not_run"], "too_many")
-        self.assertEqual(list(Path(self.td).glob("f*.txt")), [])
-        self.assertEqual(out["summary"], "Nothing was run: the script had 8 commands and "
-                                         "the limit is 5 (run_actions.max_commands).")
-        self.assertNotIn("fence", out["summary"])
+    def test_an_old_cap_in_the_config_is_ignored(self):
+        out = run_reply(eight(self.td), run_actions(max_commands=5), "xai", cwd=self.td)
+        self.assertTrue(out["ran"] and out["ok"], out["summary"])
+        self.assertNotIn("not_run", out)
+        self.assertEqual(len(list(Path(self.td).glob("f*.txt"))), 8)
 
-    def test_loop_counts_its_body_once(self):
+    def test_forty_four_commands_run(self):
+        """The block that was refused for having 44 commands against a cap of 20."""
+        lines = "".join("touch %s/g%d.txt\n" % (self.td, i) for i in range(1, 45))
+        out = run_reply("```bash\n" + lines + "```\n", run_actions(allow="all"), "xai",
+                        cwd=self.td)
+        self.assertTrue(out["ran"] and out["ok"], out["summary"])
+        self.assertEqual(len(list(Path(self.td).glob("g*.txt"))), 44)
+
+    def test_loop_runs(self):
         loop = ("```bash\nfor i in 1 2 3 4 5 6 7 8; do printf 'x\\n' > %s/f$i.txt; done\n```"
                 % self.td)
-        out = run_reply(loop, run_actions(cap=5), "xai", cwd=self.td)
+        out = run_reply(loop, run_actions(), "xai", cwd=self.td)
         self.assertTrue(out["ok"], out["summary"])
         self.assertEqual(len(list(Path(self.td).glob("f*.txt"))), 8)
 
@@ -226,7 +224,7 @@ class ReadOnly(unittest.TestCase):
 
 
 class AllCommands(unittest.TestCase):
-    CFG = {"run_actions": {"enabled": True, "allow": "all", "max_commands": 3}}
+    CFG = {"run_actions": {"enabled": True, "allow": "all"}}
 
     def test_any_command_runs(self):
         d = tempfile.mkdtemp()
@@ -234,11 +232,12 @@ class AllCommands(unittest.TestCase):
         self.assertTrue(out["ok"], out["summary"])
         self.assertEqual(sorted(os.listdir(d)), ["a", "b"])
 
-    def test_cap_still_applies(self):
+    def test_no_cap(self):
         d = tempfile.mkdtemp()
-        out = run_reply("```bash\ntouch a; touch b; touch c; touch d\n```", self.CFG, "xai", cwd=d)
-        self.assertEqual(out.get("not_run"), "too_many")
-        self.assertEqual(os.listdir(d), [])
+        cfg = {"run_actions": dict(self.CFG["run_actions"], max_commands=3)}
+        out = run_reply("```bash\ntouch a; touch b; touch c; touch d\n```", cfg, "xai", cwd=d)
+        self.assertTrue(out["ok"], out["summary"])
+        self.assertEqual(sorted(os.listdir(d)), ["a", "b", "c", "d"])
 
     def test_all_spellings(self):
         for allow in ("all", "ALL", "*", ["all"], ["*"], {"xai": "all"}, {"*": "all"}):
@@ -246,9 +245,9 @@ class AllCommands(unittest.TestCase):
         for allow in ([], ["ls"], "", None, {"openai": "all"}):
             self.assertFalse(allows_all({"run_actions": {"allow": allow}}, "xai"), allow)
 
-    def test_limits_note_has_no_list(self):
+    def test_limits_note_has_no_list_and_no_cap(self):
         note = limits_note(self.CFG, "xai")
-        self.assertIn("at most 3 commands", note)
+        self.assertNotIn("at most", note)
         self.assertNotIn("has to be one of", note)
 
     def test_off_still_means_off(self):
@@ -256,11 +255,6 @@ class AllCommands(unittest.TestCase):
         out = run_reply("```bash\ntouch a\n```", cfg, "xai", cwd=tempfile.mkdtemp())
         self.assertFalse(out["ran"])
 
-    def test_max_commands_defaults(self):
-        self.assertEqual(max_commands({}), 20)
-        self.assertEqual(max_commands({"run_actions": {"max_commands": "x"}}), 20)
-        self.assertEqual(max_commands({"run_actions": {"max_commands": 0}}), 20)
-        self.assertEqual(max_commands({"run_actions": {"max_commands": -3}}), 1)
 
 if __name__ == "__main__":
     unittest.main()

@@ -149,7 +149,7 @@ class Respond(unittest.TestCase):
         target = Path(td) / "handoff-action-delete-me.txt"
         target.write_text("x")
         fake = FakeProvider(reply="Deleted the file.\n```bash\nrm %s\n```\n" % target)
-        cfg = handoff_cfg(**run_actions(cap=5))
+        cfg = handoff_cfg(**run_actions())
         with judge_says(True), mock.patch("baton.providers.get", return_value=fake):
             out = handoff.respond(DECLINES["still_not_going_to"], [],
                                   "Permanently delete %s" % target, td, cfg)
@@ -158,12 +158,13 @@ class Respond(unittest.TestCase):
 
 
 @posix_only
-class OverTheCap(unittest.TestCase):
-    """What the person sees when the provider's first block is over the cap."""
+class NoCap(unittest.TestCase):
+    """A long block runs whole: there is no cap on how many commands it holds."""
 
     def setUp(self):
         self.td = tempfile.mkdtemp()
-        self.cfg = handoff_cfg(**run_actions(cap=5))
+        # An old config file may still carry the cap; it is ignored.
+        self.cfg = handoff_cfg(**run_actions(max_commands=5))
 
     def run_with(self, replies):
         fake = FakeProvider()
@@ -178,17 +179,16 @@ class OverTheCap(unittest.TestCase):
                                    self.td, [], self.cfg)
         return out, seen
 
-    def test_system_prompt_states_the_limits(self):
+    def test_system_prompt_states_the_allow_list_and_no_cap(self):
         _, seen = self.run_with(["Done."])
-        self.assertIn("at most 5 commands", seen[0]["system"])
+        self.assertNotIn("at most", seen[0]["system"])
         self.assertIn("printf", seen[0]["system"])
 
-    def test_asked_once_and_the_refusal_is_the_answer(self):
+    def test_a_long_block_runs_whole(self):
         out, seen = self.run_with([eight(self.td)])
         self.assertEqual(len(seen), 1)
-        self.assertEqual(list(Path(self.td).glob("f*.txt")), [])
-        self.assertEqual(out, "Nothing was run: the script had 8 commands and the limit "
-                              "is 5 (run_actions.max_commands).")
+        self.assertEqual(len(list(Path(self.td).glob("f*.txt"))), 8)
+        self.assertEqual(out, "Done.")
 
     def test_a_block_within_the_limits_runs(self):
         loop = ("```bash\nfor i in 1 2 3 4 5 6 7 8; do printf 'x\\n' > %s/f$i.txt; done\n```"

@@ -1,5 +1,5 @@
 """Reading shell scripts: fenced blocks, logical lines, simple commands and their
-executables. Used for the allow list and the command cap."""
+executables. Used for the allow list."""
 
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ BOTH_REDIRECT = re.compile(r"&(>>?)")
 
 
 def simple_commands(line: str) -> list:
-    """Every simple command in one logical line, for the allow list and the cap.
+    """Every simple command in one logical line, for the allow list.
 
     Splits at && || | ; & and at ( ) so chains, loop bodies, subshells and $(...)
     are each checked, not just the first word of the line. Commands inside
