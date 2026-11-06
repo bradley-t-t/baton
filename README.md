@@ -10,7 +10,7 @@ Three hooks. `UserPromptSubmit` only remembers what you asked and adds nothing t
 
 A reply reaches `MessageDisplay` before it's drawn. Whether it refused the request is one question, and one thing answers it: a judge model, which reads the reply against what you asked. The judge is `"auto"`, so it's on only when the provider has a key or is a local server. It runs with `BATON_JUDGE_ACTIVE` set, which switches the handoff off inside its own call so it can't recurse. A one-line status before a tool call ("Looking at the file first.") is left for `Stop` to judge at the end of the turn, because judging it here would race the provider against Claude doing the work.
 
-On a refusal the request goes to the provider with the last 4 messages and 10 tool calls, each clipped. The hook then draws the answer in place of the refusal, and anything Claude says after it in that turn is drawn as a zero-width space. `displayContent` changes only what's on screen, so the transcript and the model keep the original text. The hook gets 120 seconds, enough for a slow provider and its commands.
+On a refusal the request goes to the provider with the last 4 messages and 10 tool calls, each clipped. The hook then draws the answer in place of the refusal, and anything Claude says after it in that turn is drawn as a zero-width space. `displayContent` changes only what's on screen, so the transcript and the model keep the original text.
 
 `Stop` hands off only when display didn't, which happens when display timed out or never saw the reply. It never blocks, so you don't get "Hook re-prompted Claude" rows.
 
