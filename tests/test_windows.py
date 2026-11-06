@@ -200,7 +200,7 @@ class ScriptShell(unittest.TestCase):
     def test_a_powershell_block_really_runs(self):
         import tempfile
         work = tempfile.mkdtemp()
-        cfg = {"run_actions": {"enabled": True, "allow": "all", "timeout_seconds": 60}}
+        cfg = {"run_actions": {"enabled": True, "allow": "all"}}
         text = "```powershell\nSet-Content -Path made.txt -Value 'hi'\n```"
         with mock.patch("baton.system.git_bash", return_value=""):
             r = runner.run_reply(text, cfg, "xai", cwd=work)

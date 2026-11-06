@@ -26,7 +26,12 @@ MARKER = "-m baton.hooks"
 
 EVENTS = ("UserPromptSubmit", "Stop", "MessageDisplay")
 HOOK_NAMES = {"UserPromptSubmit": "prompt", "Stop": "stop", "MessageDisplay": "display"}
-DISPLAY_TIMEOUT = 120  # seconds: a provider call plus its commands
+# The hooks that hand off (Stop and MessageDisplay) wait for the provider and for its
+# block to finish, so Claude Code must not cut them off. Its own default is ten
+# minutes. This is about 23 days, which is no limit in practice and stays under the
+# 2^31 millisecond ceiling of a JavaScript timer.
+HANDOFF_EVENTS = ("Stop", "MessageDisplay")
+HOOK_TIMEOUT = 2_000_000  # seconds
 
 KEEP_BACKUPS = 3
 BACKUP_NAME = re.compile(r"\.bak-\d{8}-\d{6}$")
@@ -66,8 +71,8 @@ def hook_entry(event: str) -> dict:
         h = {"type": "command", "command": sys.executable, "args": hook_args(event)}
     else:
         h = {"type": "command", "command": hook_command(event)}
-    if event == "MessageDisplay":
-        h["timeout"] = DISPLAY_TIMEOUT
+    if event in HANDOFF_EVENTS:
+        h["timeout"] = HOOK_TIMEOUT
     return {"hooks": [h]}
 
 

@@ -113,7 +113,7 @@ def judge_says(declined: bool, task: str = ""):
 
 
 def run_actions(allow=None, **extra) -> dict:
-    r = {"enabled": True, "timeout_seconds": 10, "allow": ALLOW if allow is None else allow}
+    r = {"enabled": True, "allow": ALLOW if allow is None else allow}
     r.update(extra)
     return {"run_actions": r}
 
