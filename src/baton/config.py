@@ -26,7 +26,7 @@ DEFAULTS = {
         "anthropic": {"type": "anthropic", "model": "auto", "api_key_env": "ANTHROPIC_API_KEY"},
     },
     "judge": {"enabled": "auto", "provider": "", "model": "", "timeout_seconds": 45},
-    "run_actions": {"enabled": True, "timeout_seconds": 60, "max_commands": 20, "allow": "all"},
+    "run_actions": {"enabled": True, "timeout_seconds": 60, "allow": "all"},
     "context": {"user_messages": 4, "tool_calls": 10},
 }
 

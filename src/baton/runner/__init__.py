@@ -5,8 +5,8 @@ script with bash, in the Claude session's cwd, without API keys in its environme
 Windows that bash is Git Bash; without Git Bash the provider is asked for a
 ```powershell fence instead, and PowerShell runs it.
 Every simple command (each part of a chain, pipe, loop body or $(...)) has to be on
-the allow list unless run_actions.allow is "all", and run_actions.max_commands caps
-how many there are. A block that fails a check is not run at all.
+the allow list unless run_actions.allow is "all". There is no cap on how many commands
+a block may hold. A block that fails a check is not run at all.
 
 What the person sees afterwards is what the script printed, or, when it printed
 nothing, the sentence the provider wrote about it, put in the past tense.
@@ -31,7 +31,6 @@ ALL = "all"
 SCRIPT_HEADER = {"bash": "#!/usr/bin/env bash\nset -e\n",
                  "powershell": "$ErrorActionPreference = 'Stop'\n"}
 SCRIPT_SUFFIX = {"bash": ".sh", "powershell": ".ps1"}
-DEFAULT_MAX_COMMANDS = 20
 MAX_RESULT_CHARS = 2000
 KEY_NAMES = ("XAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN",
              "BATON_TOKEN")
@@ -47,7 +46,7 @@ def _allow_value(cfg: dict, provider_name: str):
 
 def allows_all(cfg: dict, provider_name: str) -> bool:
     """run_actions.allow is "all" (or a list holding "all" or "*"): any command may run.
-    The cap on commands per block and the timeout still apply."""
+    The timeout still applies."""
     raw = _allow_value(cfg, provider_name)
     if isinstance(raw, str):
         raw = [raw]
@@ -59,14 +58,6 @@ def allowlist(cfg: dict, provider_name: str) -> set:
     return set(str(a) for a in raw) if isinstance(raw, list) else set()
 
 
-def max_commands(cfg: dict) -> int:
-    try:
-        n = int((cfg.get("run_actions") or {}).get("max_commands") or DEFAULT_MAX_COMMANDS)
-    except (TypeError, ValueError):
-        n = DEFAULT_MAX_COMMANDS
-    return max(1, n)
-
-
 def limits_note(cfg: dict, provider_name: str) -> str:
     """The runner's limits, for the provider's system prompt, so it writes a script
     that will actually run. Empty when commands are not run at all."""
@@ -75,18 +66,15 @@ def limits_note(cfg: dict, provider_name: str) -> str:
     every = allows_all(cfg, provider_name)
     if not ra.get("enabled") or not (allow or every):
         return ""
-    extra = " Writing to files with > or >> is not allowed." if ra.get("read_only") else ""
+    read_only = "Writing to files with > or >> is not allowed." if ra.get("read_only") else ""
     if every:
-        limits = ("Runner limits: the block may have at most %d commands, counting each "
-                  "command in a chain, pipe or loop body. A block over the limit is not run "
-                  "at all. When the same command repeats, use one for-loop instead of a line "
-                  "per item.%s" % (max_commands(cfg), extra))
+        limits = ("Runner limits: %s" % read_only) if read_only else ""
     else:
-        limits = ("Runner limits: the block may have at most %d commands, counting each "
-                  "command in a chain, pipe or loop body, and each command has to be one of: "
-                  "%s. A block over the limit or with any other command is not run at all. "
-                  "When the same command repeats, use one for-loop instead of a line per "
-                  "item.%s" % (max_commands(cfg), ", ".join(sorted(allow)), extra))
+        limits = ("Runner limits: each command, counting each command in a chain, pipe or "
+                  "loop body, has to be one of: %s. A block with any other command is not "
+                  "run at all." % ", ".join(sorted(allow)))
+        if read_only:
+            limits += " " + read_only
     return " ".join(n for n in (shell_note(), limits) if n)
 
 
@@ -152,8 +140,8 @@ def _refused(msg: str, why: str) -> dict:
 def run_reply(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict:
     """Run the shell block in a provider's answer, when commands are on.
 
-    Returns {"ran", "ok", "summary", "log"} plus "not_run" ("too_many" or
-    "not_allowed") when a block was refused. "ran" is False when there was nothing
+    Returns {"ran", "ok", "summary", "log"} plus "not_run" ("not_allowed") when a
+    block was refused. "ran" is False when there was nothing
     to run; "summary" is the plain result to show.
     """
     nothing = _result(False, True)
@@ -169,11 +157,7 @@ def run_reply(text: str, cfg: dict, provider_name: str, cwd: str = "") -> dict:
         return nothing
 
     # The block runs as one script, so it is all or nothing: skipping some lines would
-    # change what the rest does. handoff.complete() asks once more within the limits.
-    cap = max_commands(cfg)
-    if len(simple) > cap:
-        return _refused("Nothing was run: the script had %d commands and the limit is %d "
-                        "(run_actions.max_commands)." % (len(simple), cap), "too_many")
+    # change what the rest does.
     rejected = [] if every else [c for c in simple if first_word(c) not in allow]
     if rejected:
         return _refused("Nothing was run: %s is not on the allow list."
