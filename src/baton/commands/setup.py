@@ -93,10 +93,15 @@ def _target_config() -> Path:
     return Path(os.path.expanduser(env("CONFIG"))) if env("CONFIG") else config_dir() / "config.json"
 
 
+# Limits on a block that Baton no longer has: a cap on commands and a time limit.
+# setup takes them out of an existing config.
+GONE_LIMITS = ("max_commands", "timeout_seconds")
+
+
 def commands_block(mode: str, allow: list | None = None, current: dict | None = None) -> dict:
     ra = copy.deepcopy(current or {})
-    ra.setdefault("timeout_seconds", 60)
-    ra.pop("max_commands", None)  # there is no cap on commands any more
+    for gone in GONE_LIMITS:
+        ra.pop(gone, None)
     if mode == "on":
         ra.update({"enabled": True, "allow": "all"})
         ra.pop("read_only", None)
@@ -297,7 +302,8 @@ def _commands(args, ra_now: dict) -> dict:
     if args.reset or not ra_now or _is_old_default(ra_now):
         return commands_block("on", None, ra_now)
     ra = copy.deepcopy(ra_now)
-    ra.pop("max_commands", None)  # there is no cap on commands any more
+    for gone in GONE_LIMITS:
+        ra.pop(gone, None)
     return ra
 
 

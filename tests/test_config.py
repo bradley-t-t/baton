@@ -27,7 +27,7 @@ class Defaults(Home):
         self.assertTrue(c["run_actions"]["enabled"])
         self.assertEqual(c["run_actions"]["allow"], "all")
         self.assertNotIn("max_commands", c["run_actions"])
-        self.assertEqual(c["run_actions"]["timeout_seconds"], 60)
+        self.assertNotIn("timeout_seconds", c["run_actions"])
         for name in ("xai", "openai", "anthropic", "local"):
             self.assertEqual(c["providers"][name]["model"], "auto")
 

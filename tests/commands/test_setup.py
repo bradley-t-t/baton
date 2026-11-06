@@ -99,31 +99,34 @@ class Setup(Home):
         self.cli("setup", "--provider", "grok", "--api-key", "k", "--yes", "--no-test")
         cfg = json.loads(self.cfg_file.read_text())
         cfg["providers"]["xai"]["model"] = "grok-4.5"
-        cfg["run_actions"].update({"allow": ["ls", "rm"], "timeout_seconds": 90})
+        cfg["run_actions"].update({"allow": ["ls", "rm"]})
+        cfg["context"] = {"user_messages": 6, "tool_calls": 10}
         self.cfg_file.write_text(json.dumps(cfg))
         rc, out = self.cli("setup", "--provider", "grok", "--yes", "--no-test")
         self.assertEqual(rc, 0, out)
         cfg = json.loads(self.cfg_file.read_text())
         self.assertEqual(cfg["providers"]["xai"]["model"], "grok-4.5")
         self.assertEqual(cfg["run_actions"]["allow"], ["ls", "rm"])
-        self.assertEqual(cfg["run_actions"]["timeout_seconds"], 90)
+        self.assertEqual(cfg["context"]["user_messages"], 6)
         # --reset puts the model and commands back to the defaults, keeps the rest.
         rc, out = self.cli("setup", "--provider", "grok", "--reset", "--yes", "--no-test")
         cfg = json.loads(self.cfg_file.read_text())
         self.assertEqual(cfg["providers"]["xai"]["model"], "auto")
         self.assertEqual(cfg["run_actions"]["allow"], "all")
-        self.assertEqual(cfg["run_actions"]["timeout_seconds"], 90)
+        self.assertEqual(cfg["context"]["user_messages"], 6)
 
-    def test_rerun_drops_the_old_command_cap(self):
+    def test_rerun_drops_the_old_limits(self):
         self.cli("setup", "--provider", "grok", "--api-key", "k", "--yes", "--no-test")
         cfg = json.loads(self.cfg_file.read_text())
-        cfg["run_actions"].update({"allow": ["ls", "rm"], "max_commands": 20})
+        cfg["run_actions"].update({"allow": ["ls", "rm"], "max_commands": 20,
+                                   "timeout_seconds": 60})
         self.cfg_file.write_text(json.dumps(cfg))
         for flags in ((), ("--commands", "on"), ("--reset",)):
             rc, out = self.cli("setup", "--provider", "grok", "--yes", "--no-test", *flags)
             self.assertEqual(rc, 0, out)
             cfg = json.loads(self.cfg_file.read_text())
             self.assertNotIn("max_commands", cfg["run_actions"], flags)
+            self.assertNotIn("timeout_seconds", cfg["run_actions"], flags)
 
     def test_old_shipped_defaults_move_to_the_new_ones(self):
         self.cfg_file.parent.mkdir(parents=True)
